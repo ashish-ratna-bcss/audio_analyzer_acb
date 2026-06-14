@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 def test_translate_returns_string():
     mock_tokenizer = MagicMock()
+    mock_tokenizer.lang_code_to_id = {"eng_Latn": 256047, "tel_Telu": 256095}
     mock_model = MagicMock()
 
     mock_inputs = MagicMock()
@@ -25,6 +26,7 @@ def test_translate_returns_string():
 
 def test_translate_segments():
     mock_tokenizer = MagicMock()
+    mock_tokenizer.lang_code_to_id = {"eng_Latn": 256047, "tel_Telu": 256095}
     mock_model = MagicMock()
     mock_inputs = MagicMock()
     mock_tokenizer.return_value = mock_inputs
