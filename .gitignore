@@ -1,7 +1,10 @@
 uploads/
 outputs/
 models/
+venv/
+.claude/
 __pycache__/
 *.pyc
 .env
 *.log
+.pytest_cache/

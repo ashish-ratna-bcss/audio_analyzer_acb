@@ -10,10 +10,13 @@ async def lifespan(app: FastAPI):
     os.makedirs(config.UPLOAD_DIR, exist_ok=True)
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     os.makedirs(config.MODEL_DIR, exist_ok=True)
-    from services.whisper_service import load_model as load_whisper
-    from services.diarization_service import load_pipeline as load_diarization
-    load_whisper()
-    load_diarization()
+    # Only pre-load models on server (CUDA available with enough memory)
+    # Local development: lazy-load on first request
+    if os.getenv("LOAD_MODELS_AT_STARTUP", "false").lower() == "true":
+        from services.whisper_service import load_model as load_whisper
+        from services.diarization_service import load_pipeline as load_diarization
+        load_whisper()
+        load_diarization()
     yield
 
 
