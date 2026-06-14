@@ -20,7 +20,8 @@ def client():
     with patch("services.whisper_service.load_model"), \
          patch("services.diarization_service.load_pipeline"):
         from app import app
-        return TestClient(app)
+        with TestClient(app) as test_client:
+            yield test_client
 
 
 def test_health(client):
@@ -39,9 +40,11 @@ def test_transcribe_success(client):
 
     wav_bytes = make_wav_bytes()
 
+    mock_aligned = [{"speaker": "Speaker_1", "start": 0.0, "end": 1.0, "text": "hello"}]
     with patch("api.routes.stt.convert_to_wav"), \
          patch("api.routes.stt.transcribe", return_value=mock_whisper), \
-         patch("api.routes.stt.diarize", return_value=mock_speaker):
+         patch("api.routes.stt.diarize", return_value=mock_speaker), \
+         patch("api.routes.stt.align_segments", return_value=mock_aligned):
         resp = client.post(
             "/stt/transcribe",
             files={"audio": ("test.wav", wav_bytes, "audio/wav")},
