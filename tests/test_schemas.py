@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 from models.schemas import TranscribeRequest, TranscribeResponse, Segment
 
 
@@ -18,7 +19,7 @@ def test_transcribe_request_custom():
 
 
 def test_transcribe_request_invalid_language():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         TranscribeRequest(language="fr")
 
 
