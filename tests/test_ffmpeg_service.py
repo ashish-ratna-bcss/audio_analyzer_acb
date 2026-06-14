@@ -4,9 +4,11 @@ import wave
 from services.ffmpeg_service import convert_to_wav, UnsupportedFormatError
 
 
-def test_unsupported_format_raises():
+def test_unsupported_format_raises(tmp_path):
+    fake_file = tmp_path / "audio.xyz"
+    fake_file.write_bytes(b"fake content")
     with pytest.raises(UnsupportedFormatError):
-        convert_to_wav("/tmp/fake.xyz", "/tmp/out.wav")
+        convert_to_wav(str(fake_file), str(tmp_path / "out.wav"))
 
 
 def test_wav_file_conversion(tmp_path):
