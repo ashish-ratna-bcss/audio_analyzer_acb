@@ -6,7 +6,7 @@ OUTPUT_DIR = "outputs"
 MODEL_DIR = "models"
 
 MAX_FILE_SIZE_MB = 500
-ALLOWED_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm"}
+ALLOWED_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm", ".mp4"}
 
 WHISPER_MODEL = "large-v3"
 WHISPER_DEVICE = "cuda"
