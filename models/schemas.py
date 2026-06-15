@@ -3,10 +3,10 @@ from typing import Optional, List
 
 
 class TranscribeRequest(BaseModel):
-    language: Optional[str] = Field(default="auto", pattern="^(te|en|auto)$")
+    language: Optional[str] = Field(default="auto")  # Auto-detect or specify language code (e.g., "te", "en", "hi", etc.)
     diarize: bool = True
     translate: bool = False
-    translate_to: str = Field(default="en", pattern="^en$")
+    translate_to: str = Field(default="en")  # Currently supports "en", extensible for other NLLB targets
 
 
 class Segment(BaseModel):
