@@ -29,4 +29,18 @@ NLLB_MAX_LENGTH = 1024
 TARGET_SAMPLE_RATE = 16000
 TARGET_CHANNELS = 1
 
-CONFIDENCE_THRESHOLD = 0.3  # Skip segments below this confidence
+# Hallucination filter: a segment is dropped only when BOTH signals agree it is
+# garbage (high repetition AND very low model confidence). Quiet or legitimately
+# repeated speech is never dropped, so the full conversation is preserved.
+HALLUCINATION_COMPRESSION_RATIO = 2.4  # above this = repetitive/looping output
+HALLUCINATION_CONFIDENCE = 0.2         # below this = model very unsure
+
+# Primes Whisper's first 30s with domain vocabulary and style. Biases recognition
+# of code-switched Telugu/English, names, amounts, and backchannels in call audio.
+INITIAL_PROMPT = (
+    "This is a recorded customer support phone call between an agent and a customer. "
+    "Speakers mix Telugu and English (code-switching). "
+    "The conversation includes greetings, account numbers, names, amounts in rupees, "
+    "dates, order IDs, complaints, and confirmations like haan, sare, okay, thank you. "
+    "Transcribe with correct punctuation."
+)

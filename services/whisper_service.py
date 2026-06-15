@@ -1,20 +1,8 @@
+import math
 from faster_whisper import WhisperModel
 import config
 
 _model: WhisperModel = None
-
-
-def _estimate_confidence(text: str) -> float:
-    if not text or len(text.strip()) < 2:
-        return 0.1
-
-    words = text.split()
-    if len(words) > 0:
-        # <50% unique words = repetitive = low confidence
-        if len(set(words)) < len(words) * 0.5:
-            return 0.2
-
-    return 0.8
 
 
 def load_model():
@@ -38,22 +26,36 @@ def transcribe(audio_path: str, language: str = "auto") -> dict:
     segments_iter, info = model.transcribe(
         audio_path,
         word_timestamps=True,
+        beam_size=5,
+        # Keep conversation context coherent across 30s windows. Loops are
+        # suppressed by hallucination_silence_threshold + compression_ratio,
+        # not by disabling conditioning (which would fragment the transcript).
+        condition_on_previous_text=True,
+        hallucination_silence_threshold=2.0,   # skip hallucinated text in long silences
+        no_speech_threshold=0.6,               # drop true silence
+        log_prob_threshold=-1.0,               # temperature fallback on low-confidence
+        compression_ratio_threshold=2.4,       # catch repetition loops
+        repetition_penalty=1.1,                # mild anti-loop bias
+        # Soft VAD: remove only real silence (>=500ms). Aggressive VAD was
+        # clipping quiet/distant speakers on narrowband phone audio.
         vad_filter=True,
-        vad_parameters=dict(
-            threshold=0.5,              # Speech probability threshold
-            min_silence_duration_ms=300, # Shorter silence = more splits
-            speech_pad_ms=200,          # Less padding = tighter segments
-            min_speech_duration_ms=250, # Skip very short noise bursts
-        ),
+        vad_parameters=dict(min_silence_duration_ms=500),
+        initial_prompt=config.INITIAL_PROMPT,
         **kwargs
     )
+
     segments = []
     for seg in segments_iter:
+        # Real confidence from the model's own log-probability, not a
+        # word-uniqueness heuristic (which deleted legitimate repeated speech).
+        confidence = round(math.exp(seg.avg_logprob), 3)
         segments.append({
             "start": round(seg.start, 3),
             "end": round(seg.end, 3),
             "text": seg.text.strip(),
-            "confidence": _estimate_confidence(seg.text),
+            "confidence": confidence,
+            "no_speech_prob": round(seg.no_speech_prob, 3),
+            "compression_ratio": round(seg.compression_ratio, 3),
         })
 
     return {

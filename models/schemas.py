@@ -14,7 +14,9 @@ class Segment(BaseModel):
     start: float
     end: float
     text: str
-    confidence: float = 0.5  # 0.0-1.0, lower = less confident
+    confidence: float = 0.5  # exp(avg_logprob); 0.0-1.0, lower = less confident
+    no_speech_prob: Optional[float] = None    # Whisper silence probability
+    compression_ratio: Optional[float] = None # high = repetitive/hallucinated
     translated_text: Optional[str] = None
 
 
