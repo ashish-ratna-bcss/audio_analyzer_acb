@@ -11,14 +11,13 @@ def _estimate_confidence(text: str, duration: float = 0.0) -> float:
     words = text.split()
     word_count = len(words)
 
-    # Repetition: <50% unique words
-    if len(set(words)) < word_count * 0.5:
+    # Only flag extreme repetition: >6 words AND <20% unique (obvious loops)
+    if word_count > 6 and len(set(words)) < word_count * 0.2:
         return 0.2
 
-    # Duration/word ratio: >5 seconds per word = hallucination
+    # Only flag extreme duration: >15 seconds per word (clear hallucination)
     if duration > 0 and word_count > 0:
-        secs_per_word = duration / word_count
-        if secs_per_word > 5.0:
+        if duration / word_count > 15.0:
             return 0.15
 
     return 0.8

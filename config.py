@@ -29,4 +29,4 @@ NLLB_MAX_LENGTH = 1024
 TARGET_SAMPLE_RATE = 16000
 TARGET_CHANNELS = 1
 
-CONFIDENCE_THRESHOLD = 0.3  # Skip segments below this confidence
+CONFIDENCE_THRESHOLD = 0.1  # Only filter extreme gibberish (empty/pure loops)
