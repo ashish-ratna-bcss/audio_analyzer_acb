@@ -4,21 +4,15 @@ import config
 _model: WhisperModel = None
 
 
-def _estimate_confidence(text: str, duration: float = 0.0) -> float:
+def _estimate_confidence(text: str) -> float:
     if not text or len(text.strip()) < 2:
         return 0.1
 
     words = text.split()
-    word_count = len(words)
-
-    # Only flag extreme repetition: >6 words AND <20% unique (obvious loops)
-    if word_count > 6 and len(set(words)) < word_count * 0.2:
-        return 0.2
-
-    # Only flag extreme duration: >15 seconds per word (clear hallucination)
-    if duration > 0 and word_count > 0:
-        if duration / word_count > 15.0:
-            return 0.15
+    if len(words) > 0:
+        # <50% unique words = repetitive = low confidence
+        if len(set(words)) < len(words) * 0.5:
+            return 0.2
 
     return 0.8
 
@@ -59,7 +53,7 @@ def transcribe(audio_path: str, language: str = "auto") -> dict:
             "start": round(seg.start, 3),
             "end": round(seg.end, 3),
             "text": seg.text.strip(),
-            "confidence": _estimate_confidence(seg.text, round(seg.end - seg.start, 3)),
+            "confidence": _estimate_confidence(seg.text),
         })
 
     return {
