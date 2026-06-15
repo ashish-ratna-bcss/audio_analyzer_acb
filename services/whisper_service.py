@@ -12,7 +12,7 @@ def _estimate_confidence(text: str) -> float:
     words = text.split()
     if len(words) > 0:
         # Check for word repetition (gibberish indicator)
-        if len(set(words)) < len(words) * 0.3:  # <30% unique words
+        if len(set(words)) < len(words) * 0.5:  # <50% unique words
             return 0.2  # Repetitive = low confidence
 
     return 0.8  # Normal text = high confidence
@@ -41,8 +41,10 @@ def transcribe(audio_path: str, language: str = "auto") -> dict:
         word_timestamps=True,
         vad_filter=True,
         vad_parameters=dict(
-            min_silence_duration_ms=500,
-            speech_pad_ms=400,
+            threshold=0.5,              # Speech probability threshold
+            min_silence_duration_ms=300, # Shorter silence = more splits
+            speech_pad_ms=200,          # Less padding = tighter segments
+            min_speech_duration_ms=250, # Skip very short noise bursts
         ),
         **kwargs
     )

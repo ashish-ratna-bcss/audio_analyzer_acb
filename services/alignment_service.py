@@ -23,10 +23,8 @@ def align_segments(whisper_segments: list[dict], speaker_segments: list[dict]) -
                     best_speaker = sseg["speaker"]
 
         aligned.append({
+            **wseg,  # Preserve all whisper keys (confidence, etc.)
             "speaker": best_speaker,
-            "start": w_start,
-            "end": w_end,
-            "text": wseg["text"],
         })
 
     return aligned
