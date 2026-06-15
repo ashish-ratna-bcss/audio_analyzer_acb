@@ -4,18 +4,24 @@ import config
 _model: WhisperModel = None
 
 
-def _estimate_confidence(text: str) -> float:
-    """Estimate confidence based on text characteristics."""
+def _estimate_confidence(text: str, duration: float = 0.0) -> float:
     if not text or len(text.strip()) < 2:
-        return 0.1  # Very short = low confidence
+        return 0.1
 
     words = text.split()
-    if len(words) > 0:
-        # Check for word repetition (gibberish indicator)
-        if len(set(words)) < len(words) * 0.5:  # <50% unique words
-            return 0.2  # Repetitive = low confidence
+    word_count = len(words)
 
-    return 0.8  # Normal text = high confidence
+    # Repetition: <50% unique words
+    if len(set(words)) < word_count * 0.5:
+        return 0.2
+
+    # Duration/word ratio: >5 seconds per word = hallucination
+    if duration > 0 and word_count > 0:
+        secs_per_word = duration / word_count
+        if secs_per_word > 5.0:
+            return 0.15
+
+    return 0.8
 
 
 def load_model():
@@ -54,7 +60,7 @@ def transcribe(audio_path: str, language: str = "auto") -> dict:
             "start": round(seg.start, 3),
             "end": round(seg.end, 3),
             "text": seg.text.strip(),
-            "confidence": _estimate_confidence(seg.text),
+            "confidence": _estimate_confidence(seg.text, round(seg.end - seg.start, 3)),
         })
 
     return {
