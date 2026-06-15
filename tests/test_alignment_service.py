@@ -43,3 +43,30 @@ def test_start_end_times_preserved():
     result = align_segments(whisper_segs, speaker_segs)
     assert result[0]["start"] == 1.1
     assert result[0]["end"] == 3.3
+
+
+def test_zero_overlap_uses_time_distance_fallback():
+    """Segments at boundaries with zero overlap should use closest speaker by time."""
+    whisper_segs = [
+        {"start": 4.4, "end": 9.0, "text": "boundary segment"},
+    ]
+    speaker_segs = [
+        {"start": 0.0, "end": 4.4, "speaker": "Speaker_1"},  # ends exactly where wseg starts
+        {"start": 9.0, "end": 13.0, "speaker": "Speaker_2"},  # starts exactly where wseg ends
+    ]
+    result = align_segments(whisper_segs, speaker_segs)
+    # Both have 0 overlap. Speaker_1 ends at 4.4 (distance 0 from wseg start)
+    # Speaker_2 starts at 9.0 (distance 0 from wseg end). Should pick first one found with min distance.
+    assert result[0]["speaker"] == "Speaker_1"
+
+
+def test_multiple_zero_overlap_picks_closest():
+    """With multiple zero-overlap options, should pick the one closest in time."""
+    whisper_segs = [{"start": 5.0, "end": 6.0, "text": "gap segment"}]
+    speaker_segs = [
+        {"start": 0.0, "end": 4.0, "speaker": "Speaker_1"},  # distance: min(|5-0|, |6-4|) = 2
+        {"start": 7.0, "end": 10.0, "speaker": "Speaker_2"},  # distance: min(|5-7|, |6-10|) = 2
+        {"start": 5.5, "end": 6.5, "speaker": "Speaker_3"},  # distance: min(|5-5.5|, |6-6.5|) = 0.5 (closest)
+    ]
+    result = align_segments(whisper_segs, speaker_segs)
+    assert result[0]["speaker"] == "Speaker_3"
