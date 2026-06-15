@@ -5,12 +5,13 @@ from fastapi import APIRouter, File, UploadFile, Form, HTTPException
 from typing import Optional
 
 import config
-from models.schemas import TranscribeResponse, Segment
+from models.schemas import TranscribeResponse, Segment, Turn
 from services.ffmpeg_service import convert_to_wav, UnsupportedFormatError
 from services.whisper_service import transcribe
 from services.diarization_service import diarize
 from services.alignment_service import align_segments
 from services.translation_service import translate_segments
+from services.dialogue_service import group_turns
 
 router = APIRouter()
 
@@ -73,11 +74,16 @@ async def transcribe_audio(
 
         full_text = " ".join(seg["text"] for seg in aligned)
 
+        # Merge consecutive same-speaker segments into ordered dialogue turns so
+        # the exchange sequence (who said what, when) is directly readable.
+        dialogue = group_turns(aligned)
+
         return TranscribeResponse(
             language=whisper_result["language"],
             duration=whisper_result["duration"],
             text=full_text,
             segments=[Segment(**seg) for seg in aligned],
+            dialogue=[Turn(**turn) for turn in dialogue],
         )
 
     finally:

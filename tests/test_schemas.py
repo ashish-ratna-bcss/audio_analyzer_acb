@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from models.schemas import TranscribeRequest, TranscribeResponse, Segment
+from models.schemas import TranscribeRequest, TranscribeResponse, Segment, Turn
 
 
 def test_transcribe_request_defaults():
@@ -35,7 +35,12 @@ def test_transcribe_response_structure():
         text="full transcript",
         segments=[
             Segment(speaker="Speaker_1", start=0.5, end=4.3, text="hello")
-        ]
+        ],
+        dialogue=[
+            Turn(speaker="Speaker_1", start=0.5, end=4.3, text="hello")
+        ],
     )
     assert resp.language == "te"
     assert len(resp.segments) == 1
+    assert len(resp.dialogue) == 1
+    assert resp.dialogue[0].speaker == "Speaker_1"

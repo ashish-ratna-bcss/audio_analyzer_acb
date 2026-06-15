@@ -20,8 +20,18 @@ class Segment(BaseModel):
     translated_text: Optional[str] = None
 
 
+class Turn(BaseModel):
+    speaker: str
+    start: float
+    end: float
+    text: str
+    confidence: float = 0.5  # average of the merged segments' confidences
+    translated_text: Optional[str] = None
+
+
 class TranscribeResponse(BaseModel):
     language: str
     duration: float
     text: str
-    segments: List[Segment]
+    segments: List[Segment]      # raw, fine-grained timing
+    dialogue: List[Turn]         # consecutive same-speaker segments merged into turns
