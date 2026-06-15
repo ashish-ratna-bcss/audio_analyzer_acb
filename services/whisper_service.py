@@ -30,6 +30,7 @@ def transcribe(audio_path: str, language: str = "auto") -> dict:
             "start": round(seg.start, 3),
             "end": round(seg.end, 3),
             "text": seg.text.strip(),
+            "confidence": round(seg.confidence, 3) if hasattr(seg, "confidence") else 0.5,
         })
 
     return {

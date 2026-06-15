@@ -61,6 +61,9 @@ async def transcribe_audio(
             tgt_lang = "eng_Latn"
             aligned = translate_segments(aligned, src_lang=src_lang, tgt_lang=tgt_lang)
 
+        # Filter low-confidence segments (likely gibberish)
+        aligned = [seg for seg in aligned if seg.get("confidence", 1.0) >= config.CONFIDENCE_THRESHOLD]
+
         full_text = " ".join(seg["text"] for seg in aligned)
 
         return TranscribeResponse(
