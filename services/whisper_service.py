@@ -22,7 +22,8 @@ def transcribe(audio_path: str, language: str = "auto") -> dict:
     if language != "auto":
         kwargs["language"] = language
 
-    segments_iter, info = model.transcribe(audio_path, word_timestamps=False, **kwargs)
+    # Enable word-level timestamps for better precision in segment alignment and timing accuracy
+    segments_iter, info = model.transcribe(audio_path, word_timestamps=True, **kwargs)
     segments = []
     for seg in segments_iter:
         segments.append({
