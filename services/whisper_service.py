@@ -17,11 +17,23 @@ def load_model():
     return _model
 
 
-def transcribe(audio_path: str, language: str = "auto") -> dict:
+def transcribe(audio_path: str, language: str = "auto", use_vad: bool = True) -> dict:
     model = load_model()
     kwargs = {}
     if language != "auto":
         kwargs["language"] = language
+
+    # Dynamic VAD: caller passes use_vad=False for low-volume audio that VAD
+    # would otherwise strip entirely (-> Whisper echoes the initial prompt).
+    # When on, run least-aggressive settings so quiet speakers survive.
+    if use_vad:
+        kwargs["vad_filter"] = True
+        kwargs["vad_parameters"] = dict(
+            min_silence_duration_ms=config.VAD_MIN_SILENCE_MS,
+            speech_pad_ms=config.VAD_SPEECH_PAD_MS,
+        )
+    else:
+        kwargs["vad_filter"] = False
 
     segments_iter, info = model.transcribe(
         audio_path,
@@ -36,10 +48,6 @@ def transcribe(audio_path: str, language: str = "auto") -> dict:
         log_prob_threshold=-1.0,               # temperature fallback on low-confidence
         compression_ratio_threshold=2.4,       # catch repetition loops
         repetition_penalty=1.1,                # mild anti-loop bias
-        # Soft VAD: remove only real silence (>=500ms). Aggressive VAD was
-        # clipping quiet/distant speakers on narrowband phone audio.
-        vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=500),
         initial_prompt=config.INITIAL_PROMPT,
         **kwargs
     )

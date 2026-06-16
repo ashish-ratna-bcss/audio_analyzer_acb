@@ -6,7 +6,7 @@ from typing import Optional
 
 import config
 from models.schemas import TranscribeResponse, Segment, Turn
-from services.ffmpeg_service import convert_to_wav, UnsupportedFormatError
+from services.ffmpeg_service import convert_to_wav, measure_mean_volume, UnsupportedFormatError
 from services.whisper_service import transcribe
 from services.diarization_service import diarize
 from services.alignment_service import align_segments
@@ -46,7 +46,14 @@ async def transcribe_audio(
         except RuntimeError as e:
             raise HTTPException(status_code=500, detail=f"Audio conversion failed: {e}")
 
-        whisper_result = transcribe(wav_path, language=language or "auto")
+        # Dynamic VAD: low-volume audio gets VAD off (else VAD strips it all and
+        # Whisper echoes the prompt); normal audio keeps least-aggressive VAD.
+        mean_db = measure_mean_volume(wav_path)
+        use_vad = not (mean_db is not None and mean_db < config.VAD_MIN_MEAN_DB)
+
+        whisper_result = transcribe(
+            wav_path, language=language or "auto", use_vad=use_vad
+        )
         whisper_segments = whisper_result["segments"]
 
         if diarize_flag:

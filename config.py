@@ -29,6 +29,14 @@ NLLB_MAX_LENGTH = 1024
 TARGET_SAMPLE_RATE = 16000
 TARGET_CHANNELS = 1
 
+# Dynamic VAD. VAD clips quiet/narrowband phone audio (whole file read as
+# silence -> Whisper echoes the initial prompt). So VAD is disabled when the
+# converted audio's mean loudness falls below this dBFS floor; otherwise VAD
+# runs at minimum aggressiveness, trimming only long real silence.
+VAD_MIN_MEAN_DB = -30.0          # mean dBFS below this = low volume, VAD off
+VAD_MIN_SILENCE_MS = 700         # min silence cut when VAD on (least aggressive)
+VAD_SPEECH_PAD_MS = 400          # padding around speech so edges not clipped
+
 # Hallucination filter: a segment is dropped only when BOTH signals agree it is
 # garbage (high repetition AND very low model confidence). Quiet or legitimately
 # repeated speech is never dropped, so the full conversation is preserved.
