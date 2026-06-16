@@ -24,6 +24,22 @@ of what was actually said — and an English prompt forced English output even
 for Telugu speech. Both destroy verbatim fidelity. No prompt = faithful to the
 spoken language and words. Do not re-add a prompt.
 
+## Dual output: raw + English
+
+Every upload returns two diarized views of the same call:
+
+- `raw` — faithful transcription in the spoken language/script (code-switched
+  Telugu+English as actually spoken). Whisper `task=transcribe`.
+- `english` — Whisper's built-in `task=translate` (speech -> English directly).
+  Preferred over translating the transcript text: no source-language
+  assumption, higher quality on code-switched audio.
+
+Diarization (pyannote) runs once on the audio and both passes align to the
+same speaker timeline, so speaker labels are consistent across the two views.
+Default response is minimal (`start`, `end`, `speaker`, `text`); pass
+`debug=true` to add per-turn `confidence` and a per-segment `segments[]` array
+with `no_speech_prob` / `compression_ratio` for review.
+
 ## Decode configuration (services/whisper_service.py)
 
 | setting | value | reason |

@@ -17,7 +17,13 @@ def load_model():
     return _model
 
 
-def transcribe(audio_path: str, language: str = "auto", use_vad: bool = True) -> dict:
+def transcribe(audio_path: str, language: str = "auto", use_vad: bool = True,
+               task: str = "transcribe") -> dict:
+    """Run one Whisper pass.
+
+    task="transcribe" -> faithful native transcript (code-switched as spoken).
+    task="translate"  -> Whisper's built-in speech->English translation.
+    """
     model = load_model()
     kwargs = {}
     if language != "auto":
@@ -42,6 +48,7 @@ def transcribe(audio_path: str, language: str = "auto", use_vad: bool = True) ->
     # -> the same mix. Language is auto-detected unless the caller forces one.
     segments_iter, info = model.transcribe(
         audio_path,
+        task=task,
         word_timestamps=True,
         # Wider beam = more accurate decoding. On evidence audio beam_size=10
         # recovered the critical cost/amount exchange that beam_size=5 dropped.

@@ -28,4 +28,6 @@ uvicorn app:app --host 0.0.0.0 --port 8002 --workers 1
 # Smoke test (run separately after server starts)
 # curl http://localhost:8002/health
 # curl -X POST http://localhost:8002/stt/transcribe \
-#   -F "audio=@sample.wav" -F "language=te" -F "diarize=true"
+#   -F "audio=@sample.wav" -F "language=te"
+# Returns { language, duration, raw{dialogue}, english{dialogue} }.
+# Add -F "debug=true" for per-turn confidence + per-segment review metrics.

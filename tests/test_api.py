@@ -1,7 +1,7 @@
 import io
 import wave
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 
@@ -30,33 +30,64 @@ def test_health(client):
     assert resp.json() == {"status": "ok"}
 
 
-def test_transcribe_success(client):
-    mock_whisper = {
-        "language": "te",
-        "duration": 1.0,
-        "segments": [{"start": 0.0, "end": 1.0, "text": "hello"}],
-    }
+# Whisper is patched to return native text for the transcribe pass and English
+# for the translate pass, so raw and english blocks are distinguishable.
+def _fake_transcribe(wav_path, language="auto", use_vad=True, task="transcribe"):
+    text = "hello" if task == "translate" else "హలో"
+    return {"language": "te", "duration": 1.0,
+            "segments": [{"start": 0.0, "end": 1.0, "text": text,
+                          "confidence": 0.9, "no_speech_prob": 0.1,
+                          "compression_ratio": 1.5}]}
+
+
+def _fake_align(whisper_segments, speaker_segs):
+    return [{**s, "speaker": "Speaker_1"} for s in whisper_segments]
+
+
+def test_transcribe_returns_raw_and_english(client):
     mock_speaker = [{"start": 0.0, "end": 1.0, "speaker": "Speaker_1"}]
-
-    wav_bytes = make_wav_bytes()
-
-    mock_aligned = [{"speaker": "Speaker_1", "start": 0.0, "end": 1.0, "text": "hello"}]
     with patch("api.routes.stt.convert_to_wav"), \
-         patch("api.routes.stt.transcribe", return_value=mock_whisper), \
+         patch("api.routes.stt.measure_mean_volume", return_value=-20.0), \
+         patch("api.routes.stt.transcribe", side_effect=_fake_transcribe), \
          patch("api.routes.stt.diarize", return_value=mock_speaker), \
-         patch("api.routes.stt.align_segments", return_value=mock_aligned):
+         patch("api.routes.stt.align_segments", side_effect=_fake_align):
         resp = client.post(
             "/stt/transcribe",
-            files={"audio": ("test.wav", wav_bytes, "audio/wav")},
-            data={"language": "te", "diarize": "true"},
+            files={"audio": ("test.wav", make_wav_bytes(), "audio/wav")},
+            data={"language": "te"},
         )
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["language"] == "te"
     assert body["duration"] == 1.0
-    assert len(body["segments"]) == 1
-    assert body["segments"][0]["speaker"] == "Speaker_1"
+    # both diarized blocks present
+    assert body["raw"]["dialogue"][0]["speaker"] == "Speaker_1"
+    assert body["raw"]["dialogue"][0]["text"] == "హలో"
+    assert body["english"]["dialogue"][0]["text"] == "hello"
+    # default mode: no debug metrics
+    assert "confidence" not in body["raw"]["dialogue"][0]
+    assert "segments" not in body["raw"]
+
+
+def test_transcribe_debug_adds_metrics(client):
+    mock_speaker = [{"start": 0.0, "end": 1.0, "speaker": "Speaker_1"}]
+    with patch("api.routes.stt.convert_to_wav"), \
+         patch("api.routes.stt.measure_mean_volume", return_value=-20.0), \
+         patch("api.routes.stt.transcribe", side_effect=_fake_transcribe), \
+         patch("api.routes.stt.diarize", return_value=mock_speaker), \
+         patch("api.routes.stt.align_segments", side_effect=_fake_align):
+        resp = client.post(
+            "/stt/transcribe",
+            files={"audio": ("test.wav", make_wav_bytes(), "audio/wav")},
+            data={"language": "te", "debug": "true"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["raw"]["dialogue"][0]["confidence"] == 0.9
+    assert body["raw"]["segments"][0]["compression_ratio"] == 1.5
+    assert body["english"]["segments"][0]["text"] == "hello"
 
 
 def test_transcribe_unsupported_format(client):
@@ -65,30 +96,3 @@ def test_transcribe_unsupported_format(client):
         files={"audio": ("test.xyz", b"fake", "application/octet-stream")},
     )
     assert resp.status_code == 400
-
-
-def test_transcribe_with_translation(client):
-    mock_whisper = {
-        "language": "te",
-        "duration": 2.0,
-        "segments": [{"start": 0.0, "end": 2.0, "text": "నమస్కారం"}],
-    }
-    mock_speaker = [{"start": 0.0, "end": 2.0, "speaker": "Speaker_1"}]
-    mock_translated = [
-        {"start": 0.0, "end": 2.0, "text": "నమస్కారం",
-         "speaker": "Speaker_1", "translated_text": "Hello"}
-    ]
-
-    with patch("api.routes.stt.convert_to_wav"), \
-         patch("api.routes.stt.transcribe", return_value=mock_whisper), \
-         patch("api.routes.stt.diarize", return_value=mock_speaker), \
-         patch("api.routes.stt.translate_segments", return_value=mock_translated):
-        resp = client.post(
-            "/stt/transcribe",
-            files={"audio": ("test.wav", make_wav_bytes(), "audio/wav")},
-            data={"translate": "true"},
-        )
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["segments"][0]["translated_text"] == "Hello"
