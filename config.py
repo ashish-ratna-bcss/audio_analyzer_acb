@@ -11,7 +11,13 @@ OUTPUT_DIR = "outputs"
 MODEL_DIR = os.getenv("MODEL_DIR", "models")
 
 MAX_FILE_SIZE_MB = 500
-ALLOWED_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm", ".mp4"}
+# Audio + common video containers (ffmpeg extracts the audio track from video).
+ALLOWED_EXTENSIONS = {
+    # audio
+    ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac",
+    # video (audio extracted via ffmpeg)
+    ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm", ".3gp",
+}
 
 # Device auto-detects so the same image runs on any instance: CUDA (GPU,
 # float16) when available, else CPU (int8). Override with env vars if needed.

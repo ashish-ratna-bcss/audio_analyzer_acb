@@ -56,8 +56,12 @@ fetch("http://<IP>:8002/stt/transcribe", {
 6. Storage: **100+ GB** gp3 (model weights + CUDA image are large).
 7. Network / **Security group** — create one:
    - SSH: TCP **22**, source = **My IP**.
-   - Custom TCP: port **8002**, source = **My IP** (or your app server's IP/SG).
-     Do NOT use 0.0.0.0/0 — key travels over HTTP in cleartext.
+   - Custom TCP: port **8002**, source = **0.0.0.0/0** (public access from
+     anywhere, as required for the app).
+     WARNING: this is plain HTTP — the API key and uploaded audio travel
+     UNENCRYPTED. The API key is the only thing stopping abuse. Use a long
+     random key, rotate it, and move to HTTPS (Caddy/nginx + domain) before
+     handling real evidence at scale. Keeping SSH (22) restricted to My IP.
 8. **Launch instance**.
 
 ### 2. Allocate a stable IP (so it survives stop/start)
@@ -148,7 +152,17 @@ The image runs without a GPU too:
 
 ## E. Security notes
 
-- API key over plain HTTP is only safe behind a restricted security group.
-  For public access, put Caddy/nginx with TLS in front (separate task).
-- Rotate `API_KEY` by editing `.env` and `docker compose up -d`.
-- `/health` is intentionally unauthenticated for load-balancer/health checks.
+This deployment is **public HTTP + API key** (chosen for the demo). Implications:
+- The API key and the uploaded audio/video travel **unencrypted**. Anyone on
+  the network path can read them. Acceptable for a demo, NOT for sustained
+  evidence handling.
+- The API key is the only access control. Make it long and random
+  (`openssl rand -hex 32`) and rotate it: edit `.env` then `docker compose up -d`.
+- Uploads accept audio and common video (mp4/mov/mkv/avi/webm/…); ffmpeg
+  extracts the audio. Max size `MAX_FILE_SIZE_MB` (default 500).
+- `/health` is unauthenticated for health checks.
+
+**Upgrade path to HTTPS (do this before real public use):** point a domain at
+the Elastic IP and run Caddy as a reverse proxy in front of port 8002 — Caddy
+auto-provisions a Let's Encrypt cert. The app then calls `https://api.your
+domain.com/stt/transcribe`. Ask and this can be added as a compose service.
