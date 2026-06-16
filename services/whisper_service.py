@@ -43,7 +43,9 @@ def transcribe(audio_path: str, language: str = "auto", use_vad: bool = True) ->
     segments_iter, info = model.transcribe(
         audio_path,
         word_timestamps=True,
-        beam_size=5,
+        # Wider beam = more accurate decoding. On evidence audio beam_size=10
+        # recovered the critical cost/amount exchange that beam_size=5 dropped.
+        beam_size=10,
         # OFF: with it on, a hallucinated phrase fed forward into each window
         # and snowballed into a repetition loop (charan call looped one phrase
         # and lost most speech). Off = each window decoded independently, which

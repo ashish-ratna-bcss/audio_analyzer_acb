@@ -69,16 +69,12 @@ async def transcribe_audio(
             tgt_lang = "eng_Latn"
             aligned = translate_segments(aligned, src_lang=src_lang, tgt_lang=tgt_lang)
 
-        # Drop only confirmed hallucinations (both signals agree). Never filter
-        # quiet or legitimately repeated speech, so the full transcript survives.
-        aligned = [
-            seg for seg in aligned
-            if not (
-                seg.get("compression_ratio", 0.0) > config.HALLUCINATION_COMPRESSION_RATIO
-                and seg.get("confidence", 1.0) < config.HALLUCINATION_CONFIDENCE
-            )
-        ]
-
+        # EVIDENCE: never silently drop segments. This is forensic audio
+        # (ACB trap-case evidence); deleting a segment could remove real
+        # speech and is not defensible. Every segment is returned with its
+        # confidence, no_speech_prob and compression_ratio so a human can
+        # review low-confidence / possible-hallucination spans against the
+        # source audio instead of the system discarding them.
         full_text = " ".join(seg["text"] for seg in aligned)
 
         # Merge consecutive same-speaker segments into ordered dialogue turns so

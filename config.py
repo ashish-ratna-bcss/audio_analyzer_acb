@@ -37,11 +37,9 @@ VAD_MIN_MEAN_DB = -30.0          # mean dBFS below this = low volume, VAD off
 VAD_MIN_SILENCE_MS = 700         # min silence cut when VAD on (least aggressive)
 VAD_SPEECH_PAD_MS = 400          # padding around speech so edges not clipped
 
-# Hallucination filter: a segment is dropped only when BOTH signals agree it is
-# garbage (high repetition AND very low model confidence). Quiet or legitimately
-# repeated speech is never dropped, so the full conversation is preserved.
-HALLUCINATION_COMPRESSION_RATIO = 2.4  # above this = repetitive/looping output
-HALLUCINATION_CONFIDENCE = 0.2         # below this = model very unsure
+# NOTE: forensic mode keeps every segment (no hallucination drop filter).
+# This is evidence audio, so possible hallucinations are flagged via each
+# segment's confidence / compression_ratio for human review, never deleted.
 
 # NOTE: no Whisper initial_prompt. An English domain prompt biased the model
 # into emitting English even for Telugu speech, breaking faithful code-switch
