@@ -1,5 +1,6 @@
 venv/
-models/*/
+models/
+!models/*.py
 model_cache/
 uploads/
 outputs/
