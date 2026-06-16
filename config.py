@@ -37,24 +37,13 @@ VAD_MIN_MEAN_DB = -30.0          # mean dBFS below this = low volume, VAD off
 VAD_MIN_SILENCE_MS = 700         # min silence cut when VAD on (least aggressive)
 VAD_SPEECH_PAD_MS = 400          # padding around speech so edges not clipped
 
-# First STT pass uses INITIAL_PROMPT for domain biasing. On some audio (long
-# calls) Whisper collapses into echoing the prompt -> near-zero real speech.
-# When detected speech covers less than this fraction of the file duration,
-# the pass is re-run without the prompt (which recovers the full transcript).
-MIN_SPEECH_COVERAGE = 0.4
-
 # Hallucination filter: a segment is dropped only when BOTH signals agree it is
 # garbage (high repetition AND very low model confidence). Quiet or legitimately
 # repeated speech is never dropped, so the full conversation is preserved.
 HALLUCINATION_COMPRESSION_RATIO = 2.4  # above this = repetitive/looping output
 HALLUCINATION_CONFIDENCE = 0.2         # below this = model very unsure
 
-# Primes Whisper's first 30s with domain vocabulary and style. Biases recognition
-# of code-switched Telugu/English, names, amounts, and backchannels in call audio.
-INITIAL_PROMPT = (
-    "This is a recorded customer support phone call between an agent and a customer. "
-    "Speakers mix Telugu and English (code-switching). "
-    "The conversation includes greetings, account numbers, names, amounts in rupees, "
-    "dates, order IDs, complaints, and confirmations like haan, sare, okay, thank you. "
-    "Transcribe with correct punctuation."
-)
+# NOTE: no Whisper initial_prompt. An English domain prompt biased the model
+# into emitting English even for Telugu speech, breaking faithful code-switch
+# transcription (and collapsed long calls to a prompt-echo segment). Output
+# now follows the spoken language/script as detected.

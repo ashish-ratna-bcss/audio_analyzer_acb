@@ -17,8 +17,8 @@ def load_model():
     return _model
 
 
-def _decode(model, audio_path, language, use_vad, initial_prompt):
-    """Single Whisper pass. Returns (segments, info)."""
+def transcribe(audio_path: str, language: str = "auto", use_vad: bool = True) -> dict:
+    model = load_model()
     kwargs = {}
     if language != "auto":
         kwargs["language"] = language
@@ -34,22 +34,21 @@ def _decode(model, audio_path, language, use_vad, initial_prompt):
     else:
         kwargs["vad_filter"] = False
 
+    # No initial_prompt: it must stay a FAITHFUL transcription. An English
+    # prompt biased Whisper into emitting English even for Telugu speech
+    # (and, with hallucination_silence_threshold, collapsed long calls to a
+    # single prompt-echo segment). Without it, output stays in the spoken
+    # language/script -- pure English -> English, code-switched Telugu+English
+    # -> the same mix. Language is auto-detected unless the caller forces one.
     segments_iter, info = model.transcribe(
         audio_path,
         word_timestamps=True,
         beam_size=5,
-        # Keep conversation context coherent across 30s windows.
-        condition_on_previous_text=True,
-        # NOTE: hallucination_silence_threshold removed. Combined with
-        # initial_prompt it caused long calls to collapse to a single
-        # prompt-echo segment (the model emitted the prompt's imperative,
-        # then silence-suppression wiped the rest). Repetition is still
-        # bounded by compression_ratio_threshold + repetition_penalty.
-        no_speech_threshold=0.6,               # drop true silence
-        log_prob_threshold=-1.0,               # temperature fallback on low-confidence
-        compression_ratio_threshold=2.4,       # catch repetition loops
-        repetition_penalty=1.1,                # mild anti-loop bias
-        initial_prompt=initial_prompt,
+        condition_on_previous_text=True,      # coherent context across 30s windows
+        no_speech_threshold=0.6,              # drop true silence
+        log_prob_threshold=-1.0,              # temperature fallback on low-confidence
+        compression_ratio_threshold=2.4,      # catch repetition loops
+        repetition_penalty=1.1,               # mild anti-loop bias
         **kwargs
     )
 
@@ -65,31 +64,6 @@ def _decode(model, audio_path, language, use_vad, initial_prompt):
             "no_speech_prob": round(seg.no_speech_prob, 3),
             "compression_ratio": round(seg.compression_ratio, 3),
         })
-    return segments, info
-
-
-def _coverage(segments, duration):
-    if not duration:
-        return 1.0
-    speech = sum(s["end"] - s["start"] for s in segments)
-    return speech / duration
-
-
-def transcribe(audio_path: str, language: str = "auto", use_vad: bool = True) -> dict:
-    model = load_model()
-
-    # First pass with the domain prompt (biases code-switched Telugu/English,
-    # names, amounts). On some audio the prompt makes Whisper collapse into
-    # echoing it; detect that via low speech coverage and re-run without it.
-    segments, info = _decode(model, audio_path, language, use_vad,
-                             config.INITIAL_PROMPT)
-
-    if _coverage(segments, info.duration) < config.MIN_SPEECH_COVERAGE:
-        fallback, info = _decode(model, audio_path, language, use_vad,
-                                 initial_prompt=None)
-        # Keep whichever pass recovered more speech.
-        if _coverage(fallback, info.duration) > _coverage(segments, info.duration):
-            segments = fallback
 
     return {
         "language": info.language,
