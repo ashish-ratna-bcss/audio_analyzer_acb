@@ -60,6 +60,7 @@ async def transcribe_audio(
     audio: UploadFile = File(...),
     language: Optional[str] = Form(default="auto"),
     diarize_flag: bool = Form(default=True, alias="diarize"),
+    num_speakers: Optional[int] = Form(default=None),
     debug: bool = Form(default=False),
 ):
     ext = os.path.splitext(audio.filename or "")[1].lower()
@@ -93,7 +94,7 @@ async def transcribe_audio(
         # on the audio (language-independent), so run it ONCE and align both
         # Whisper passes to the same speaker timeline -> speaker labels stay
         # consistent across the raw and English views.
-        speaker_segs = diarize(wav_path) if diarize_flag else None
+        speaker_segs = diarize(wav_path, num_speakers=num_speakers) if diarize_flag else None
 
         lang = language or "auto"
         raw_result = transcribe(wav_path, language=lang, use_vad=use_vad, task="transcribe")

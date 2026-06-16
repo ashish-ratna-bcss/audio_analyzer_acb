@@ -55,9 +55,9 @@ TARGET_CHANNELS = 1
 # silence -> Whisper echoes the initial prompt). So VAD is disabled when the
 # converted audio's mean loudness falls below this dBFS floor; otherwise VAD
 # runs at minimum aggressiveness, trimming only long real silence.
-VAD_MIN_MEAN_DB = -30.0          # mean dBFS below this = low volume, VAD off
-VAD_MIN_SILENCE_MS = 700         # min silence cut when VAD on (least aggressive)
-VAD_SPEECH_PAD_MS = 400          # padding around speech so edges not clipped
+VAD_MIN_MEAN_DB = -38.0          # mean dBFS below this = low volume, VAD off
+VAD_MIN_SILENCE_MS = 2000        # only cut 2s+ silence (forensic: keep more audio)
+VAD_SPEECH_PAD_MS = 600          # wider padding so speech edges not clipped
 
 # NOTE: forensic mode keeps every segment (no hallucination drop filter).
 # This is evidence audio, so possible hallucinations are flagged via each

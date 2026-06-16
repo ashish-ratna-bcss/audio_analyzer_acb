@@ -16,9 +16,12 @@ def load_pipeline():
     return _pipeline
 
 
-def diarize(audio_path: str) -> list[dict]:
+def diarize(audio_path: str, num_speakers: int | None = 2) -> list[dict]:
     pipeline = load_pipeline()
-    diarization = pipeline(audio_path)
+    kwargs = {}
+    if num_speakers is not None:
+        kwargs["num_speakers"] = num_speakers
+    diarization = pipeline(audio_path, **kwargs)
 
     speaker_map: dict[str, str] = {}
     speaker_counter = 1
