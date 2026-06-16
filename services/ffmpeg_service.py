@@ -18,13 +18,19 @@ def convert_to_wav(input_path: str, output_path: str) -> str:
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
+        "-vn",                       # drop video; decode audio only
         # Force the first audio stream. Multi-track files (separate
         # caller/agent tracks, or a silent placeholder track) otherwise let
         # ffmpeg auto-pick the wrong/empty stream -> silence -> bad STT.
-        "-map", "0:a:0",
+        "-map", "0:a:0?",
+        # Full re-decode to clean 16-bit PCM. Phone/call-recording mp4s often
+        # carry timestamp offsets and gaps; aresample async=1:first_pts=0
+        # rebuilds a continuous timeline so Whisper does not read the start as
+        # silence (the prior failure: 220s file -> one prompt-echo blip at 211s).
+        "-acodec", "pcm_s16le",
+        "-af", "aresample=async=1:first_pts=0",
         "-ac", str(config.TARGET_CHANNELS),
         "-ar", str(config.TARGET_SAMPLE_RATE),
-        "-sample_fmt", "s16",
         output_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
