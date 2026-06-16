@@ -58,10 +58,20 @@ def transcribe(audio_path: str, language: str = "auto", use_vad: bool = True,
         # and lost most speech). Off = each window decoded independently, which
         # breaks the loop and recovers the full transcript.
         condition_on_previous_text=False,
+        # Deterministic decoding (single temperature, no sampling fallback) so
+        # the same evidence audio always yields the same transcript -- required
+        # for a defensible forensic record. The default temperature fallback
+        # was non-deterministic and occasionally truncated a long call.
+        temperature=0.0,
+        # repetition_penalty raised 1.1 -> 1.3: at temperature=0 there is no
+        # sampling to escape a repetition loop, so a stronger deterministic
+        # penalty is needed. 1.3 collapsed the "fifteen" loop (compression
+        # ratio 3.68 -> 1.94) without the script garbage that no_repeat_ngram
+        # caused or the English drift that 1.5 caused.
+        repetition_penalty=1.3,
         no_speech_threshold=0.6,              # drop true silence
-        log_prob_threshold=-1.0,              # temperature fallback on low-confidence
-        compression_ratio_threshold=2.4,      # catch repetition loops
-        repetition_penalty=1.1,               # mild anti-loop bias
+        log_prob_threshold=-1.0,              # marks low-confidence segments
+        compression_ratio_threshold=2.4,      # marks repetitive segments
         **kwargs
     )
 

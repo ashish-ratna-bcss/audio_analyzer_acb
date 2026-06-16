@@ -49,8 +49,12 @@ with `no_speech_prob` / `compression_ratio` for review.
 | condition_on_previous_text | False | True snowballed a hallucinated phrase into a repetition loop, losing most speech |
 | initial_prompt | none | priming causes word substitution (see above) |
 | vad_filter | True (min_silence 700ms, pad 400ms) | VAD OFF lost more content in testing; conservative VAD does not clip speech here |
-| temperature | default fallback | escapes failed/looping windows |
+| temperature | 0.0 | deterministic: same audio -> same transcript (reproducible/defensible). Default fallback sampling was non-deterministic and occasionally truncated long calls |
+| repetition_penalty | 1.3 | deterministic anti-loop (no sampling to escape loops at temp=0); collapsed the "fifteen" loop without script garbage. 1.5 over-penalized into English; no_repeat_ngram_size caused cross-script garbage |
 | word_timestamps | True | word-level timing for evidence review |
+
+Suspect spans (loops/low confidence) are flagged via per-segment
+`compression_ratio` and `confidence` in `debug=true` output, never deleted.
 
 ## No silent dropping (api/routes/stt.py)
 
