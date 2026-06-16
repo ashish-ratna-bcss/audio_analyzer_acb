@@ -44,7 +44,11 @@ def transcribe(audio_path: str, language: str = "auto", use_vad: bool = True) ->
         audio_path,
         word_timestamps=True,
         beam_size=5,
-        condition_on_previous_text=True,      # coherent context across 30s windows
+        # OFF: with it on, a hallucinated phrase fed forward into each window
+        # and snowballed into a repetition loop (charan call looped one phrase
+        # and lost most speech). Off = each window decoded independently, which
+        # breaks the loop and recovers the full transcript.
+        condition_on_previous_text=False,
         no_speech_threshold=0.6,              # drop true silence
         log_prob_threshold=-1.0,              # temperature fallback on low-confidence
         compression_ratio_threshold=2.4,      # catch repetition loops
