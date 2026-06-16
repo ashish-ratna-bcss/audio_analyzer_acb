@@ -1,16 +1,32 @@
 import os
 import warnings
 
+# API key for request auth (X-API-Key header). Empty = auth disabled (local dev).
+API_KEY = os.getenv("API_KEY", "")
+
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "outputs"
-MODEL_DIR = "models"
+# Whisper model download cache. Overridable so Docker can point it at a mounted
+# volume separate from the `models/` Python package (avoids clobbering schemas).
+MODEL_DIR = os.getenv("MODEL_DIR", "models")
 
 MAX_FILE_SIZE_MB = 500
 ALLOWED_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm", ".mp4"}
 
+# Device auto-detects so the same image runs on any instance: CUDA (GPU,
+# float16) when available, else CPU (int8). Override with env vars if needed.
+try:
+    import torch
+    _HAS_CUDA = torch.cuda.is_available()
+except Exception:
+    _HAS_CUDA = False
+_DEVICE = os.getenv("DEVICE", "cuda" if _HAS_CUDA else "cpu")
+
 WHISPER_MODEL = "large-v3"
-WHISPER_DEVICE = "cuda"
-WHISPER_COMPUTE_TYPE = "float16"
+WHISPER_DEVICE = _DEVICE
+WHISPER_COMPUTE_TYPE = os.getenv(
+    "WHISPER_COMPUTE_TYPE", "float16" if _DEVICE == "cuda" else "int8"
+)
 
 DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"
 _hf_token = os.getenv("HF_TOKEN", "")
@@ -23,7 +39,7 @@ if not _hf_token:
 PYANNOTE_AUTH_TOKEN = _hf_token
 
 NLLB_MODEL = "facebook/nllb-200-distilled-600M"
-NLLB_DEVICE = "cuda"
+NLLB_DEVICE = _DEVICE
 NLLB_MAX_LENGTH = 1024
 
 TARGET_SAMPLE_RATE = 16000

@@ -1,0 +1,30 @@
+services:
+  stt:
+    build: .
+    image: acb-audio-analyzer
+    container_name: acb-audio-analyzer
+    env_file: .env
+    environment:
+      # download cache on a mounted volume, not the models/ python package
+      - MODEL_DIR=/app/model_cache
+      # warm the models at boot so the first request is fast
+      - LOAD_MODELS_AT_STARTUP=true
+    ports:
+      - "8002:8002"
+    volumes:
+      - model_cache:/app/model_cache              # whisper weights
+      - hf_cache:/root/.cache/huggingface         # pyannote / HF weights
+    # background + auto-start on instance reboot (Docker daemon starts on boot)
+    restart: unless-stopped
+    # GPU access. Remove this whole `deploy:` block on a CPU-only instance.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  model_cache:
+  hf_cache:

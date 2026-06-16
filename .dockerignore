@@ -1,0 +1,15 @@
+venv/
+models/*/
+model_cache/
+uploads/
+outputs/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+.env
+.worktrees/
+docs/
+tests/

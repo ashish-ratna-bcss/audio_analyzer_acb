@@ -2,6 +2,7 @@ uploads/
 outputs/
 models/
 !models/*.py
+model_cache/
 venv/
 .claude/
 __pycache__/

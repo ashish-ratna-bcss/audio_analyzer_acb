@@ -115,3 +115,36 @@ def test_transcribe_unsupported_format(client):
         files={"audio": ("test.xyz", b"fake", "application/octet-stream")},
     )
     assert resp.status_code == 400
+
+
+def test_transcribe_requires_api_key_when_set(client, monkeypatch):
+    monkeypatch.setattr("config.API_KEY", "secret")
+    # missing key -> 401, before any processing
+    resp = client.post(
+        "/stt/transcribe",
+        files={"audio": ("test.wav", make_wav_bytes(), "audio/wav")},
+    )
+    assert resp.status_code == 401
+    # wrong key -> 401
+    resp = client.post(
+        "/stt/transcribe",
+        files={"audio": ("test.wav", make_wav_bytes(), "audio/wav")},
+        headers={"X-API-Key": "nope"},
+    )
+    assert resp.status_code == 401
+
+
+def test_transcribe_accepts_valid_api_key(client, monkeypatch):
+    monkeypatch.setattr("config.API_KEY", "secret")
+    mock_speaker = [{"start": 0.0, "end": 1.0, "speaker": "Speaker_1"}]
+    with patch("api.routes.stt.convert_to_wav"), \
+         patch("api.routes.stt.measure_mean_volume", return_value=-20.0), \
+         patch("api.routes.stt.transcribe", side_effect=_fake_transcribe), \
+         patch("api.routes.stt.diarize", return_value=mock_speaker), \
+         patch("api.routes.stt.align_segments", side_effect=_fake_align):
+        resp = client.post(
+            "/stt/transcribe",
+            files={"audio": ("test.wav", make_wav_bytes(), "audio/wav")},
+            headers={"X-API-Key": "secret"},
+        )
+    assert resp.status_code == 200

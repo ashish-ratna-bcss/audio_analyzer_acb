@@ -1,10 +1,11 @@
 import os
 import uuid
 import aiofiles
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends
 from typing import Optional
 
 import config
+from api.auth import require_api_key
 from models.schemas import TranscribeResponse, Block, DialogueTurn, SegmentDetail
 from services.ffmpeg_service import convert_to_wav, measure_mean_volume, UnsupportedFormatError
 from services.whisper_service import transcribe
@@ -53,6 +54,7 @@ def _build_block(whisper_segments: list[dict], speaker_segs: Optional[list[dict]
     "/transcribe",
     response_model=TranscribeResponse,
     response_model_exclude_none=True,  # drop None confidence/segments in default mode
+    dependencies=[Depends(require_api_key)],
 )
 async def transcribe_audio(
     audio: UploadFile = File(...),

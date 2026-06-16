@@ -12,7 +12,7 @@ def load_pipeline():
             config.DIARIZATION_MODEL,
             use_auth_token=config.PYANNOTE_AUTH_TOKEN,
         )
-        _pipeline.to(torch.device("cuda"))
+        _pipeline.to(torch.device(config.WHISPER_DEVICE))
     return _pipeline
 
 
