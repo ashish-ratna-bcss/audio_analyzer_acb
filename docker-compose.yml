@@ -10,7 +10,7 @@ services:
       # warm the models at boot so the first request is fast
       - LOAD_MODELS_AT_STARTUP=true
     ports:
-      - "8002:8002"
+      - "8009:8009"
     volumes:
       - model_cache:/app/model_cache              # whisper weights
       - hf_cache:/root/.cache/huggingface         # pyannote / HF weights

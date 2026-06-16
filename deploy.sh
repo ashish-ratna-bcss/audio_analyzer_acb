@@ -22,12 +22,12 @@ if [ -z "$HF_TOKEN" ]; then
 fi
 
 # 3. Start API
-echo "[3/3] Starting API on port 8002..."
-uvicorn app:app --host 0.0.0.0 --port 8002 --workers 1
+echo "[3/3] Starting API on port 8009..."
+uvicorn app:app --host 0.0.0.0 --port 8009 --workers 1
 
 # Smoke test (run separately after server starts)
-# curl http://localhost:8002/health
-# curl -X POST http://localhost:8002/stt/transcribe \
+# curl http://localhost:8009/health
+# curl -X POST http://localhost:8009/stt/transcribe \
 #   -F "audio=@sample.wav" -F "language=te"
 # Returns { language, duration, raw{dialogue}, english{dialogue} }.
 # Diarization is on by default; add -F "diarize=false" to disable it.

@@ -1,7 +1,7 @@
 # Deploy on AWS (Docker, GPU, auto-start)
 
 Runs the API as a Docker service on an AWS GPU instance. The container:
-- exposes the endpoint on port 8002,
+- exposes the endpoint on port 8009,
 - requires an `X-API-Key` header (shared with your app),
 - runs in the background and **survives SSH logout**,
 - **auto-starts when the instance reboots / is stopped and started again**
@@ -14,7 +14,7 @@ The same image also runs on a CPU instance (slower) — see notes at the end.
 ## A. Endpoint (reference for app integration)
 
 ```bash
-curl -s -X POST http://<INSTANCE_PUBLIC_IP>:8002/stt/transcribe \
+curl -s -X POST http://<INSTANCE_PUBLIC_IP>:8009/stt/transcribe \
   -H "X-API-Key: <YOUR_API_KEY>" \
   -F "audio=@/path/to/call.mp4"
 ```
@@ -32,11 +32,11 @@ Response:
 - `english` = full English translation
 - omit `language` to auto-detect; add `-F debug=true` for confidence/metrics;
   `-F diarize=false` for a single speaker.
-- Health check (no key): `curl http://<IP>:8002/health`
+- Health check (no key): `curl http://<IP>:8009/health`
 
 In your app, send the same key from `.env`:
 ```ts
-fetch("http://<IP>:8002/stt/transcribe", {
+fetch("http://<IP>:8009/stt/transcribe", {
   method: "POST",
   headers: { "X-API-Key": process.env.STT_API_KEY! },
   body: formData,   // field name: audio
@@ -56,7 +56,7 @@ fetch("http://<IP>:8002/stt/transcribe", {
 6. Storage: **100+ GB** gp3 (model weights + CUDA image are large).
 7. Network / **Security group** — create one:
    - SSH: TCP **22**, source = **My IP**.
-   - Custom TCP: port **8002**, source = **0.0.0.0/0** (public access from
+   - Custom TCP: port **8009**, source = **0.0.0.0/0** (public access from
      anywhere, as required for the app).
      WARNING: this is plain HTTP — the API key and uploaded audio travel
      UNENCRYPTED. The API key is the only thing stopping abuse. Use a long
@@ -108,9 +108,9 @@ docker compose up -d --build
 ### 6. Verify
 ```bash
 docker compose logs -f          # watch startup; Ctrl-C to stop watching
-curl http://localhost:8002/health
+curl http://localhost:8009/health
 # from your machine:
-curl -s -X POST http://<ELASTIC_IP>:8002/stt/transcribe \
+curl -s -X POST http://<ELASTIC_IP>:8009/stt/transcribe \
   -H "X-API-Key: <YOUR_API_KEY>" -F "audio=@sample.mp4"
 ```
 
@@ -163,6 +163,6 @@ This deployment is **public HTTP + API key** (chosen for the demo). Implications
 - `/health` is unauthenticated for health checks.
 
 **Upgrade path to HTTPS (do this before real public use):** point a domain at
-the Elastic IP and run Caddy as a reverse proxy in front of port 8002 — Caddy
+the Elastic IP and run Caddy as a reverse proxy in front of port 8009 — Caddy
 auto-provisions a Let's Encrypt cert. The app then calls `https://api.your
 domain.com/stt/transcribe`. Ask and this can be added as a compose service.
