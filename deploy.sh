@@ -30,4 +30,5 @@ uvicorn app:app --host 0.0.0.0 --port 8002 --workers 1
 # curl -X POST http://localhost:8002/stt/transcribe \
 #   -F "audio=@sample.wav" -F "language=te"
 # Returns { language, duration, raw{dialogue}, english{dialogue} }.
+# Diarization is on by default; add -F "diarize=false" to disable it.
 # Add -F "debug=true" for per-turn confidence + per-segment review metrics.

@@ -25,8 +25,9 @@ plus the verbatim raw, side by side.
   No cross-pass per-turn alignment; the two are independently segmented.
 - **Diarization once.** pyannote runs on the audio (language-independent); both
   Whisper passes align to the same speaker timeline -> consistent speakers.
-- **Both always produced.** Old `translate` / `translate_to` / `diarize` form
-  flags removed. Remaining params: `audio`, `language` (default auto), `debug`.
+- **Both always produced.** Old `translate` / `translate_to` flags removed.
+  Params: `audio`, `language` (default auto), `diarize` (default true; pass
+  false to disable speaker separation -> single Speaker_1), `debug`.
 - **`debug` flag.** Default response is minimal per turn (`start`, `end`,
   `speaker`, `text`). `debug=true` adds per-turn `confidence` and a per-block
   `segments[]` array with `confidence`, `no_speech_prob`, `compression_ratio`.

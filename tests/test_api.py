@@ -90,6 +90,25 @@ def test_transcribe_debug_adds_metrics(client):
     assert body["english"]["segments"][0]["text"] == "hello"
 
 
+def test_transcribe_diarize_false_single_speaker(client):
+    # diarize=false: pyannote skipped, everything under Speaker_1.
+    with patch("api.routes.stt.convert_to_wav"), \
+         patch("api.routes.stt.measure_mean_volume", return_value=-20.0), \
+         patch("api.routes.stt.transcribe", side_effect=_fake_transcribe), \
+         patch("api.routes.stt.diarize") as mock_diarize, \
+         patch("api.routes.stt.align_segments", side_effect=_fake_align):
+        resp = client.post(
+            "/stt/transcribe",
+            files={"audio": ("test.wav", make_wav_bytes(), "audio/wav")},
+            data={"language": "te", "diarize": "false"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["raw"]["dialogue"][0]["speaker"] == "Speaker_1"
+    mock_diarize.assert_not_called()  # diarization skipped
+
+
 def test_transcribe_unsupported_format(client):
     resp = client.post(
         "/stt/transcribe",

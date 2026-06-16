@@ -15,10 +15,15 @@ from services.dialogue_service import group_turns
 router = APIRouter()
 
 
-def _build_block(whisper_segments: list[dict], speaker_segs: list[dict], debug: bool) -> Block:
-    """Align a Whisper pass to the shared speaker timeline and shape it into a
-    diarized Block. Fine-grained segments + review metrics only when debug."""
-    aligned = align_segments(whisper_segments, speaker_segs)
+def _build_block(whisper_segments: list[dict], speaker_segs: Optional[list[dict]],
+                 debug: bool) -> Block:
+    """Shape a Whisper pass into a diarized Block. When speaker_segs is given,
+    align to the shared speaker timeline; when None (diarization off), put
+    everything under a single speaker. Segments + metrics only when debug."""
+    if speaker_segs is not None:
+        aligned = align_segments(whisper_segments, speaker_segs)
+    else:
+        aligned = [{**s, "speaker": "Speaker_1"} for s in whisper_segments]
     turns = group_turns(aligned)
 
     dialogue = [
@@ -52,6 +57,7 @@ def _build_block(whisper_segments: list[dict], speaker_segs: list[dict], debug: 
 async def transcribe_audio(
     audio: UploadFile = File(...),
     language: Optional[str] = Form(default="auto"),
+    diarize_flag: bool = Form(default=True, alias="diarize"),
     debug: bool = Form(default=False),
 ):
     ext = os.path.splitext(audio.filename or "")[1].lower()
@@ -81,10 +87,11 @@ async def transcribe_audio(
         mean_db = measure_mean_volume(wav_path)
         use_vad = not (mean_db is not None and mean_db < config.VAD_MIN_MEAN_DB)
 
-        # Diarization runs on the audio (language-independent), so run it ONCE
-        # and align both Whisper passes to the same speaker timeline -> speaker
-        # labels stay consistent across the raw and English views.
-        speaker_segs = diarize(wav_path)
+        # Diarization is on by default (pass diarize=false to disable). It runs
+        # on the audio (language-independent), so run it ONCE and align both
+        # Whisper passes to the same speaker timeline -> speaker labels stay
+        # consistent across the raw and English views.
+        speaker_segs = diarize(wav_path) if diarize_flag else None
 
         lang = language or "auto"
         raw_result = transcribe(wav_path, language=lang, use_vad=use_vad, task="transcribe")

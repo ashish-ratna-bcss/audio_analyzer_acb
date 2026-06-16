@@ -4,7 +4,8 @@ from typing import Optional, List
 
 class TranscribeRequest(BaseModel):
     language: Optional[str] = Field(default="auto")  # auto-detect or a code like "te", "en"
-    debug: bool = False  # include confidence / per-segment metrics in the response
+    diarize: bool = True   # speaker separation on by default; pass false to disable
+    debug: bool = False    # include confidence / per-segment metrics in the response
 
 
 class DialogueTurn(BaseModel):
