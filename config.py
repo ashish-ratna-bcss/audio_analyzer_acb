@@ -85,3 +85,11 @@ GPU_QUEUE = "gpu_queue"
 
 # Run Celery tasks inline (no broker) — set true in tests.
 CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "false").lower() == "true"
+
+# --- Phase 3: recall branches (enhancement / VAD union / separation) ---
+VAD_THRESHOLD = 0.25
+VAD_MIN_SPEECH_MS = 100
+VAD_SPEECH_PAD_MS_L3 = 300
+VAD_MIN_SILENCE_MS_L3 = 100
+DFN_MODEL = "DeepFilterNet3"          # DeepFilterNet3 enhancement
+DEMUCS_MODEL = "htdemucs_ft"          # HTDemucs separation checkpoint
