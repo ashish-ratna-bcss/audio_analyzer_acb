@@ -13,7 +13,7 @@ from services import audit_service as au
 router = APIRouter(prefix="/review", dependencies=[Depends(require_api_key)])
 
 _DECISION_TO_STATUS = {"accept": "accepted", "edit": "edited", "reject": "rejected"}
-_VALID_PASSES = {"pass1_whisper", "pass2_indic_whisper", "pass3_seamless"}
+_VALID_PASSES = {"pass1_whisper", "pass2_indic_conformer", "pass3_seamless"}
 
 
 class ReviewDecision(BaseModel):

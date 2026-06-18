@@ -73,21 +73,36 @@ def transcribe_clip(wav_path: str, detected_lang: str) -> dict:
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            output_tokens = model.generate(
+            gen_out = model.generate(
                 **inputs,
                 tgt_lang=tgt_lang,
+                return_dict_in_generate=True,
+                output_scores=True,
             )
 
-        # output_tokens shape varies by transformers version: (batch, seq) or nested
-        raw = output_tokens[0]
+        sequences = gen_out.sequences
+        raw = sequences[0]
         if hasattr(raw, "tolist"):
             ids = raw.tolist()
             if ids and isinstance(ids[0], list):
                 ids = ids[0]
         else:
-            ids = raw
+            ids = list(raw)
         text = processor.decode(ids, skip_special_tokens=True).strip()
-        confidence = 0.6 if text else 0.0
+
+        # Real per-token confidence from generation scores
+        scores = getattr(gen_out, "scores", None)
+        if scores:
+            import math
+            log_probs = []
+            for step in scores:
+                lp = torch.log_softmax(step[0], dim=-1)
+                log_probs.append(lp.max().item())
+            avg_lp = sum(log_probs) / len(log_probs)
+            confidence = round(max(0.0, min(1.0, math.exp(avg_lp))), 4)
+        else:
+            confidence = 0.6 if text else 0.0
+
         return {"text": text, "confidence": confidence, "language": detected_lang}
 
     except Exception as exc:

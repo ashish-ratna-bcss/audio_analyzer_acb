@@ -96,13 +96,14 @@ DEMUCS_MODEL = "htdemucs_ft"          # HTDemucs separation checkpoint
 
 # --- Phase 4: attribution + multi-pass ASR ---
 
-# Pass 2: AI4Bharat IndicWhisper — language-specific Whisper fine-tunes.
-# Template: {base}/{lang_code} e.g. ai4bharat/whisper-medium-te
-# Falls back to Whisper large-v3 forced-language if model unavailable.
-INDIC_WHISPER_BASE = os.getenv("INDIC_WHISPER_BASE", "ai4bharat/whisper-medium")
-INDIC_WHISPER_LANGS = ["te", "ta", "kn", "ml", "hi", "mr", "bn", "gu", "pa", "ur"]
+# Pre-ASR: MMS-LID audio-grounded language identification (independent of Whisper decoder).
+MMS_LID_MODEL = os.getenv("MMS_LID_MODEL", "facebook/mms-lid-256")
 
-# Pass 3: SeamlessM4T v2 — Meta multilingual end-to-end model.
+# Pass 2: AI4Bharat IndicConformer-600M — single checkpoint, all 22 scheduled Indian languages.
+# Loads via AutoModel with trust_remote_code=True; no NeMo dependency.
+INDIC_CONFORMER_MODEL = os.getenv("INDIC_CONFORMER_MODEL", "ai4bharat/indic-conformer-600m-multilingual")
+
+# Pass 3: SeamlessM4T v2 — Meta multilingual end-to-end model (run on original audio).
 SEAMLESS_MODEL = os.getenv("SEAMLESS_MODEL", "facebook/seamless-m4t-v2-large")
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/LaBSE")

@@ -1,75 +1,96 @@
+"""
+Pass 2: AI4Bharat IndicConformer-600M multilingual.
+Single checkpoint covering all 22 scheduled Indian languages + English.
+Loads via AutoModel with trust_remote_code=True — no NeMo dependency.
+Lang code routed from MMS-LID (not from Whisper pass-1 detected_language).
+Falls back to Whisper-large-v3 forced-language for non-Indic content.
+"""
 import logging
 import config
 
 logger = logging.getLogger(__name__)
 
-# Cache per language: lang_code -> transformers pipeline | None (unavailable)
-_models: dict = {}
+_model = None
+
+# Languages natively supported by IndicConformer-600M (2-letter + extended codes).
+_INDIC_SUPPORTED = {
+    "as", "bn", "brx", "doi", "gu", "hi", "kn", "ks", "kok",
+    "mai", "ml", "mni", "mr", "ne", "or", "pa", "sa", "sat",
+    "sd", "ta", "te", "ur", "en",
+}
 
 
-def _model_id(lang_code: str) -> str | None:
-    if lang_code in config.INDIC_WHISPER_LANGS:
-        return f"{config.INDIC_WHISPER_BASE}-{lang_code}"
-    return None
-
-
-def _load_for_lang(lang_code: str):
-    """Lazy-load IndicWhisper model for lang_code. Returns pipeline or None."""
-    if lang_code in _models:
-        return _models[lang_code]
-
-    model_id = _model_id(lang_code)
-    if model_id is None:
-        _models[lang_code] = None
-        return None
-
-    try:
-        import torch
-        from transformers import pipeline as hf_pipeline
-        device = 0 if config.WHISPER_DEVICE == "cuda" else -1
-        dtype = torch.float16 if config.WHISPER_DEVICE == "cuda" else torch.float32
-        pipe = hf_pipeline(
-            "automatic-speech-recognition",
-            model=model_id,
-            device=device,
-            torch_dtype=dtype,
-            token=config.PYANNOTE_AUTH_TOKEN or None,
+def _load():
+    global _model
+    if _model is None:
+        from transformers import AutoModel
+        logger.info("Loading IndicConformer-600M (%s)…", config.INDIC_CONFORMER_MODEL)
+        _model = AutoModel.from_pretrained(
+            config.INDIC_CONFORMER_MODEL,
+            trust_remote_code=True,
         )
-        _models[lang_code] = pipe
-        logger.info("Loaded IndicWhisper %s", model_id)
-        return pipe
-    except Exception as exc:
-        logger.warning("IndicWhisper unavailable for %s (%s): %s", lang_code, model_id, exc)
-        _models[lang_code] = None
-        return None
+        if config.WHISPER_DEVICE == "cuda":
+            import torch
+            _model = _model.to("cuda")
+        _model.eval()
+        logger.info("IndicConformer-600M loaded.")
+    return _model
 
 
-def transcribe_clip(wav_path: str, detected_lang: str) -> dict:
-    """Pass 2: AI4Bharat IndicWhisper, language-routed.
-
-    Falls back to Whisper large-v3 forced to detected_lang if the
-    per-language IndicWhisper model is unavailable on HuggingFace.
+def transcribe_clip(wav_path: str, lang_code: str) -> dict:
     """
-    pipe = _load_for_lang(detected_lang)
+    Pass 2 ASR. lang_code: ISO 639-1 from MMS-LID routing (not Whisper).
+    For Indic languages: runs IndicConformer-600M (real model, not Whisper).
+    For non-Indic: runs Whisper large-v3 forced to lang_code.
+    """
+    model_used = config.INDIC_CONFORMER_MODEL
 
-    if pipe is not None:
+    if lang_code in _INDIC_SUPPORTED:
         try:
-            result = pipe(wav_path)
-            text = (result.get("text") or "").strip()
-            # transformers ASR pipeline returns no per-segment logprob;
-            # use 0.65 as a reasonable mid-range when the model produces output.
-            confidence = 0.65 if text else 0.0
-            return {"text": text, "confidence": confidence, "language": detected_lang}
-        except Exception as exc:
-            logger.warning("IndicWhisper inference failed for %s: %s", wav_path, exc)
+            import torch
+            import torchaudio
 
-    # Fallback: Whisper large-v3 forced to the detected language
+            model = _load()
+            wav, sr = torchaudio.load(wav_path)
+            wav = torch.mean(wav, dim=0, keepdim=True)  # mono [1, T]
+            if sr != 16000:
+                wav = torchaudio.transforms.Resample(sr, 16000)(wav)
+            if config.WHISPER_DEVICE == "cuda":
+                wav = wav.to("cuda")
+
+            result = model(wav, lang_code, "rnnt")
+            if isinstance(result, (list, tuple)):
+                text = result[0] if result else ""
+            else:
+                text = result or ""
+            text = str(text).strip()
+
+            confidence = 0.75 if text else 0.0
+            return {
+                "text": text,
+                "confidence": confidence,
+                "language": lang_code,
+                "model": model_used,
+            }
+
+        except Exception as exc:
+            logger.warning(
+                "IndicConformer failed for %s (lang=%s): %s. Falling back to Whisper forced.",
+                wav_path, lang_code, exc,
+            )
+            model_used = "whisper_forced_lang_fallback"
+
+    else:
+        # Non-Indic language — IndicConformer doesn't cover it.
+        model_used = "whisper_forced_lang"
+
+    # Fallback: Whisper large-v3 forced to routing lang
     from services import whisper_service
-    lang = detected_lang if detected_lang and detected_lang != "und" else "auto"
+    lang = lang_code if lang_code and lang_code != "und" else "auto"
     res = whisper_service.transcribe(wav_path, language=lang, use_vad=False)
     segs = res["segments"]
     if not segs:
-        return {"text": "", "confidence": 0.0, "language": detected_lang}
+        return {"text": "", "confidence": 0.0, "language": lang_code, "model": model_used}
     text = " ".join(s["text"] for s in segs).strip()
     conf = round(sum(s["confidence"] for s in segs) / len(segs), 3)
-    return {"text": text, "confidence": conf, "language": detected_lang}
+    return {"text": text, "confidence": conf, "language": lang_code, "model": model_used}
