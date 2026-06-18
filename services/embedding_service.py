@@ -7,7 +7,7 @@ def load_embed():
     global _model
     if _model is None:
         from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer(config.EMBED_MODEL)
+        _model = SentenceTransformer(config.EMBED_MODEL, token=config.PYANNOTE_AUTH_TOKEN or None)
     return _model
 
 

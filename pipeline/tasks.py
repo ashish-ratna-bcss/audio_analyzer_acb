@@ -264,12 +264,14 @@ def run_pipeline(job_id: str) -> str:
             job = repo.get_job(s, job_id)
             in16 = storage.derivative_path(job.case_id, job.file_id, "normalized",
                                            f"{job.file_id}_16k_mono.wav")
+            in48 = storage.derivative_path(job.case_id, job.file_id, "normalized",
+                                           f"{job.file_id}_48k.wav")
             repo.update_job(s, job_id, stage="L2"); s.commit()
             enhanced = _l2_enhance(job, in16, source_hash, s)
             stem = None
             if (job.options or {}).get("separate"):
                 repo.update_job(s, job_id, stage="L2b"); s.commit()
-                stem = _l2b_separate(job, in16, source_hash, s)
+                stem = _l2b_separate(job, in48, source_hash, s)
             repo.update_job(s, job_id, stage="L3"); s.commit()
             _l3_vad_union(job, in16, enhanced, stem, s)
     except Exception as e:
