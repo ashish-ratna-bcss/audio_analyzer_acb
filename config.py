@@ -95,5 +95,5 @@ DFN_MODEL = "DeepFilterNet3"          # DeepFilterNet3 enhancement
 DEMUCS_MODEL = "htdemucs_ft"          # HTDemucs separation checkpoint
 
 # --- Phase 4: attribution + multi-pass ASR ---
-INDIC_ASR_MODEL = os.getenv("INDIC_ASR_MODEL", "ai4bharat/indic-conformer-600m-multilingual")
+INDIC_ASR_MODEL = os.getenv("INDIC_ASR_MODEL", "ai4bharat/indicwav2vec_v1_telugu")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/LaBSE")
