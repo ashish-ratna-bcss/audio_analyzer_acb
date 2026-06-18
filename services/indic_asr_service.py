@@ -8,7 +8,8 @@ def load_indic():
     if _model is None:
         from transformers import pipeline
         _model = pipeline("automatic-speech-recognition", model=config.INDIC_ASR_MODEL,
-                          token=config.PYANNOTE_AUTH_TOKEN or None)
+                          token=config.PYANNOTE_AUTH_TOKEN or None,
+                          trust_remote_code=True)
     return _model
 
 
