@@ -1,4 +1,4 @@
-from db.models import Case, File, Job, JobStatus, AuditEntry
+from db.models import Case, File, Job, JobStatus, AuditEntry, Segment
 
 
 def create_case(session) -> str:
@@ -80,3 +80,18 @@ def list_audit_entries(session, case_id):
     return (session.query(AuditEntry)
             .filter(AuditEntry.case_id == case_id)
             .order_by(AuditEntry.id).all())
+
+
+def add_segment(session, *, file_id, start, end, speaker, text, confidence,
+                source_pass, flagged, review_status=None):
+    seg = Segment(file_id=file_id, start=start, end=end, speaker=speaker,
+                  text=text, confidence=confidence, source_pass=source_pass,
+                  flagged=flagged, review_status=review_status)
+    session.add(seg)
+    session.flush()
+    return seg.id
+
+
+def list_segments(session, file_id):
+    return (session.query(Segment).filter(Segment.file_id == file_id)
+            .order_by(Segment.start).all())

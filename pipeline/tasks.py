@@ -12,11 +12,14 @@ from services import storage
 from services import manifest_service as man
 from services import vad_service, enhancement_service, separation_service
 from services import vad_union
+from services import (diarization_service, whisper_service, indic_asr_service,
+                      embedding_service, clip_service)
+from services import cross_model, diarize_assign
 from services.hashing import sha256_file
 from services.ffmpeg_service import convert_dual_rate, UnsupportedFormatError
 
-# L4-L8 are still placeholder; Phases 4-5 replace them with real layer tasks.
-PLACEHOLDER_STAGES = ["L4", "L5", "L6", "L7", "L8"]
+# L7-L8 are still placeholder; Phase 5 replaces them with real layer tasks.
+PLACEHOLDER_STAGES = ["L7", "L8"]
 
 
 def _inbox_original(case_id: str, file_id: str, ext: str) -> str:
@@ -146,6 +149,91 @@ def _l3_vad_union(job, in16, enhanced, stem, session):
     return union
 
 
+def _whisper_clip(clip_path, task):
+    res = whisper_service.transcribe(clip_path, language="auto", use_vad=False, task=task)
+    segs = res["segments"]
+    if not segs:
+        return {"text": "", "confidence": 0.0}
+    return {"text": " ".join(s["text"] for s in segs).strip(),
+            "confidence": round(sum(s["confidence"] for s in segs) / len(segs), 3)}
+
+
+def _l4_diarize(job, in48, session):
+    turns = diarization_service.diarize_with_overlap(in48)
+    out = storage.derivative_path(job.case_id, job.file_id, "diarization",
+                                  f"{job.file_id}_speaker_timeline.json")
+    speakers = sorted({t["speaker"] for t in turns})
+    with open(out, "w") as f:
+        json.dump({"file_id": job.file_id, "speakers": speakers,
+                   "timeline": turns,
+                   "model_version": config.DIARIZATION_MODEL}, f, indent=2)
+    au.append_entry(job.case_id, file_id=job.file_id, stage="L4",
+                    model=config.DIARIZATION_MODEL,
+                    parameters={"turns": len(turns)}, session=session)
+    session.commit()
+    return turns
+
+
+def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
+    workdir = os.path.dirname(
+        storage.derivative_path(job.case_id, job.file_id, "clips", "_"))
+    per_segment, flagged_count = [], 0
+    enh_source = enhanced16 or original16
+    for idx, region in enumerate(union):
+        clip_enh = os.path.join(workdir, f"seg_{idx:04d}_enh.wav")
+        clip_org = os.path.join(workdir, f"seg_{idx:04d}_org.wav")
+        clip_service.cut(enh_source, region["start"], region["end"], clip_enh)
+        clip_service.cut(original16, region["start"], region["end"], clip_org)
+
+        p1 = _whisper_clip(clip_enh, "transcribe")
+        p2 = _whisper_clip(clip_org, "transcribe")
+        p3 = indic_asr_service.transcribe_clip(clip_org)
+        texts = {"pass1_enhanced": p1["text"], "pass2_original": p2["text"],
+                 "pass3_indic": p3["text"]}
+        confs = {"pass1_enhanced": p1["confidence"], "pass2_original": p2["confidence"],
+                 "pass3_indic": p3["confidence"]}
+        sim = embedding_service.similarity(p1["text"], p2["text"])
+        verdict = cross_model.compare_passes(texts, confs, vad_positive=True,
+                                             embedding_sim=sim)
+        spk = diarize_assign.assign_speakers(region, turns)
+        winning = p1["text"] or p2["text"] or p3["text"]
+        source_pass = ("pass1_enhanced" if p1["text"] else
+                       "pass2_original" if p2["text"] else "pass3_indic")
+        seg_id = repo.add_segment(
+            session, file_id=job.file_id, start=region["start"], end=region["end"],
+            speaker="+".join(spk["speakers"]), text=winning,
+            confidence=verdict["confidence"], source_pass=source_pass,
+            flagged=verdict["flagged"],
+            review_status="pending" if verdict["flagged"] else "auto_accepted")
+        if verdict["flagged"]:
+            flagged_count += 1
+        per_segment.append({
+            "segment_id": seg_id, "edit_distance_norm": None,
+            "embedding_similarity": round(sim, 3), "avg_logprob": None,
+            "flag_reason": verdict["flag_reason"]})
+    session.commit()
+    reconcile.check("L3:union", len(union), "L5:segments", len(per_segment))
+    return per_segment, flagged_count
+
+
+def _write_confidence_report(job, per_segment, flagged_count, session):
+    out = storage.derivative_path(job.case_id, job.file_id, "confidence",
+                                  f"{job.file_id}_confidence_report.json")
+    reasons = {}
+    for ps in per_segment:
+        if ps["flag_reason"]:
+            reasons[ps["flag_reason"]] = reasons.get(ps["flag_reason"], 0) + 1
+    with open(out, "w") as f:
+        json.dump({"file_id": job.file_id, "segments_total": len(per_segment),
+                   "segments_auto_accepted": len(per_segment) - flagged_count,
+                   "segments_flagged": flagged_count, "flag_reasons": reasons,
+                   "per_segment": per_segment}, f, indent=2)
+    au.append_entry(job.case_id, file_id=job.file_id, stage="L6",
+                    parameters={"flagged": flagged_count,
+                                "total": len(per_segment)}, session=session)
+    session.commit()
+
+
 @celery.task(name="pipeline.run_pipeline")
 def run_pipeline(job_id: str) -> str:
     with get_session() as s:
@@ -190,7 +278,34 @@ def run_pipeline(job_id: str) -> str:
             s.commit()
         raise
 
-    # Placeholder remainder (Phases 4-5).
+    # L4/L5/L6 attribution + ASR + confidence.
+    try:
+        with get_session() as s:
+            job = repo.get_job(s, job_id)
+            in48 = storage.derivative_path(job.case_id, job.file_id, "normalized",
+                                           f"{job.file_id}_48k.wav")
+            in16 = storage.derivative_path(job.case_id, job.file_id, "normalized",
+                                           f"{job.file_id}_16k_mono.wav")
+            enh = storage.derivative_path(job.case_id, job.file_id, "enhanced",
+                                          f"{job.file_id}_dfn3.wav")
+            enh = enh if os.path.exists(enh) else None
+            vad_json = storage.derivative_path(job.case_id, job.file_id, "vad",
+                                               f"{job.file_id}_segments_union.json")
+            union = json.load(open(vad_json))["segments"]
+
+            repo.update_job(s, job_id, stage="L4"); s.commit()
+            turns = _l4_diarize(job, in48, s)
+            repo.update_job(s, job_id, stage="L5"); s.commit()
+            per_segment, flagged = _l5_l6_segments(job, union, turns, enh, in16, s)
+            repo.update_job(s, job_id, stage="L6"); s.commit()
+            _write_confidence_report(job, per_segment, flagged, s)
+    except Exception as e:
+        with get_session() as s:
+            repo.update_job(s, job_id, status=JobStatus.FAILED, error=str(e))
+            s.commit()
+        raise
+
+    # Placeholder remainder (Phase 5).
     try:
         for stage in PLACEHOLDER_STAGES:
             with get_session() as s:
