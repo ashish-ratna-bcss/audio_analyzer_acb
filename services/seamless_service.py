@@ -44,7 +44,20 @@ def transcribe_clip(wav_path: str, detected_lang: str) -> dict:
     import torch
     import librosa
 
+    # SeamlessM4T supported langs — fall back to eng for unsupported
+    _SUPPORTED = {
+        "afr","amh","arb","ary","arz","ast","azj","bel","ben","bos","bul","cat",
+        "ceb","ces","ckb","cmn","cym","dan","deu","ell","eng","est","eus","fin",
+        "fra","gaz","gle","glg","guj","heb","hin","hrv","hun","hye","ibo","ind",
+        "isl","ita","jav","jpn","kan","kat","kaz","khk","khm","kir","kor","lao",
+        "lit","lug","luo","lvs","mai","mal","mar","mkd","mlt","mni","mya","nld",
+        "nno","nob","npi","nya","ory","pan","pbt","pes","pol","por","ron","rus",
+        "sat","slk","slv","sna","snd","som","spa","srp","swe","swh","tam","tel",
+        "tgk","tgl","tha","tur","ukr","urd","uzn","vie","yor","yue","zsm","zul",
+    }
     tgt_lang = _LANG_MAP.get(detected_lang, "eng")
+    if tgt_lang not in _SUPPORTED:
+        tgt_lang = "eng"
 
     try:
         processor, model = load_seamless()
@@ -63,12 +76,17 @@ def transcribe_clip(wav_path: str, detected_lang: str) -> dict:
             output_tokens = model.generate(
                 **inputs,
                 tgt_lang=tgt_lang,
-                generate_speech=False,
             )
 
-        text = processor.decode(
-            output_tokens[0].tolist()[0], skip_special_tokens=True
-        ).strip()
+        # output_tokens shape varies by transformers version: (batch, seq) or nested
+        raw = output_tokens[0]
+        if hasattr(raw, "tolist"):
+            ids = raw.tolist()
+            if ids and isinstance(ids[0], list):
+                ids = ids[0]
+        else:
+            ids = raw
+        text = processor.decode(ids, skip_special_tokens=True).strip()
         confidence = 0.6 if text else 0.0
         return {"text": text, "confidence": confidence, "language": detected_lang}
 
