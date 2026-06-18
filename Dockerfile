@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip ffmpeg \
+        python3 python3-pip ffmpeg bash \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,6 +19,8 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN chmod +x /app/docker-entrypoint-api.sh
+
 EXPOSE 8009
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8009", "--workers", "1"]
+CMD ["/bin/bash", "/app/docker-entrypoint-api.sh"]

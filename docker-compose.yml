@@ -1,22 +1,70 @@
 services:
-  stt:
+  nginx:
+    image: nginx:latest
+    ports: ["443:443", "80:80"]
+    volumes:
+      - ./nginx/forensic.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [api]
+    restart: unless-stopped
+
+  api:
     build: .
-    image: acb-audio-analyzer
-    container_name: acb-audio-analyzer
+    image: forensic-audio
     env_file: .env
     environment:
-      # download cache on a mounted volume, not the models/ python package
-      - MODEL_DIR=/app/model_cache
-      # warm the models at boot so the first request is fast
-      - LOAD_MODELS_AT_STARTUP=true
-    ports:
-      - "8009:8009"
+      - DATABASE_URL=postgresql+psycopg2://pipeline:pipeline@postgres:5432/forensic
+      - REDIS_URL=redis://redis:6379/0
+      - CASE_STORE_PATH=/data/forensic-audio
+    command: ["/bin/bash", "/app/docker-entrypoint-api.sh"]
     volumes:
-      - model_cache:/app/model_cache              # whisper weights
-      - hf_cache:/root/.cache/huggingface         # pyannote / HF weights
-    # background + auto-start on instance reboot (Docker daemon starts on boot)
+      - case_data:/data/forensic-audio
+    depends_on: [redis, postgres]
     restart: unless-stopped
-    # GPU access. Remove this whole `deploy:` block on a CPU-only instance.
+
+  redis:
+    image: redis:7
+    volumes: [redis_data:/data]
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    environment:
+      - POSTGRES_DB=forensic
+      - POSTGRES_USER=pipeline
+      - POSTGRES_PASSWORD=pipeline
+    volumes: [pg_data:/var/lib/postgresql/data]
+    restart: unless-stopped
+
+  worker-cpu:
+    image: forensic-audio
+    build: .
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://pipeline:pipeline@postgres:5432/forensic
+      - REDIS_URL=redis://redis:6379/0
+      - CASE_STORE_PATH=/data/forensic-audio
+    command: celery -A pipeline.celery_app worker -Q cpu_queue --concurrency=4 -n cpu@%h
+    volumes:
+      - case_data:/data/forensic-audio
+      - model_cache:/app/model_cache
+    depends_on: [redis, postgres]
+    restart: unless-stopped
+
+  worker-gpu:
+    image: forensic-audio
+    build: .
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://pipeline:pipeline@postgres:5432/forensic
+      - REDIS_URL=redis://redis:6379/0
+      - CASE_STORE_PATH=/data/forensic-audio
+      - CUDA_VISIBLE_DEVICES=0
+    command: celery -A pipeline.celery_app worker -Q gpu_queue --concurrency=1 -n gpu@%h
+    volumes:
+      - case_data:/data/forensic-audio
+      - model_cache:/app/model_cache
+      - hf_cache:/root/.cache/huggingface
+    depends_on: [redis, postgres]
     deploy:
       resources:
         reservations:
@@ -24,7 +72,22 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    restart: unless-stopped
+
+  flower:
+    image: forensic-audio
+    build: .
+    env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    command: celery -A pipeline.celery_app flower --port=5555
+    ports: ["5555:5555"]
+    depends_on: [redis]
+    restart: unless-stopped
 
 volumes:
+  case_data:
+  redis_data:
+  pg_data:
   model_cache:
   hf_cache:
