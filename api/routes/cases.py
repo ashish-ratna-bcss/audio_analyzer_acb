@@ -1,4 +1,5 @@
 import os
+import json as _json
 
 import aiofiles
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends, status
@@ -7,7 +8,9 @@ import config
 from api.auth import require_api_key
 from db.base import get_session
 from db import repository as repo
-from db.models import Case
+from db.models import Case, JobStatus
+from services import audit_service as au
+from services import transcript_service as ts
 from pipeline.tasks import run_pipeline
 
 router = APIRouter()
@@ -68,3 +71,27 @@ def get_job(job_id: str):
             "stage": job.stage,
             "degraded_flags": job.degraded_flags or [],
         }
+
+
+@router.post("/cases/{case_id}/files/{file_id}/certify",
+             dependencies=[Depends(require_api_key)])
+def certify(case_id: str, file_id: str):
+    with get_session() as s:
+        pending = repo.count_pending_flagged(s, file_id)
+        if pending > 0:
+            raise HTTPException(status_code=409,
+                                detail=f"{pending} flagged segment(s) still pending review")
+        # Flip the persisted transcript to certified.
+        path = ts.final_path(case_id, file_id)
+        if os.path.exists(path):
+            data = _json.load(open(path))
+            data["status"] = "certified"
+            ts.write(case_id, file_id, data)
+        job = repo.latest_job_for_file(s, file_id)
+        if job is not None:
+            repo.update_job(s, job.id, status=JobStatus.CERTIFIED)
+        s.commit()
+        au.append_entry(case_id, file_id=file_id, stage="certify",
+                        parameters={"result": "certified"}, session=s)
+        s.commit()
+    return {"status": "certified"}
