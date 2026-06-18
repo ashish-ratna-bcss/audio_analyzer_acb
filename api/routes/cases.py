@@ -53,7 +53,7 @@ async def upload_file(case_id: str, audio: UploadFile = File(...),
     async with aiofiles.open(staged, "wb") as f:
         await f.write(content)
 
-    run_pipeline.delay(job_id)
+    run_pipeline.apply_async(args=[job_id], queue=config.GPU_QUEUE)
     return {"file_id": file_id, "job_id": job_id}
 
 

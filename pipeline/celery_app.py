@@ -7,6 +7,7 @@ celery.conf.update(
     task_always_eager=config.CELERY_TASK_ALWAYS_EAGER,
     task_eager_propagates=True,
     task_default_queue=config.CPU_QUEUE,
+    task_routes={"pipeline.tasks.run_pipeline": {"queue": config.GPU_QUEUE}},
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
