@@ -22,3 +22,4 @@ psycopg2-binary==2.9.9
 deepfilternet==0.5.6
 demucs==4.0.1
 silero-vad==5.1
+sentence-transformers==3.0.1
