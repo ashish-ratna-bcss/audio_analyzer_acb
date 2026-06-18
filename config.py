@@ -67,3 +67,21 @@ VAD_SPEECH_PAD_MS = 600          # wider padding so speech edges not clipped
 # into emitting English even for Telugu speech, breaking faithful code-switch
 # transcription (and collapsed long calls to a prompt-echo segment). Output
 # now follows the spoken language/script as detected.
+
+# --- Phase 1: async foundation (Celery / Redis / Postgres / case store) ---
+
+# SQLAlchemy URL. Local/test default is in-memory SQLite; deploy sets Postgres
+# via env (postgresql+psycopg2://...).
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+pysqlite:///./forensic_local.db")
+
+# Celery broker + result backend.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# Root of the immutable case/evidence tree (originals, derivatives, audit).
+CASE_STORE_PATH = os.getenv("CASE_STORE_PATH", "case_data")
+
+CPU_QUEUE = "cpu_queue"
+GPU_QUEUE = "gpu_queue"
+
+# Run Celery tasks inline (no broker) — set true in tests.
+CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "false").lower() == "true"
