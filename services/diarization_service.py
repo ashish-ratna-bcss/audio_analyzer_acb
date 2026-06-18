@@ -38,3 +38,21 @@ def diarize(audio_path: str, num_speakers: int | None = 2) -> list[dict]:
         })
 
     return segments
+
+
+def diarize_with_overlap(audio_path: str, num_speakers: int | None = None) -> list[dict]:
+    """pyannote 3.1 turns WITH overlapped speech retained — overlapping instants
+    yield multiple turns rather than being collapsed to one speaker."""
+    pipeline = load_pipeline()
+    kwargs = {}
+    if num_speakers is not None:
+        kwargs["num_speakers"] = num_speakers
+    diarization = pipeline(audio_path, **kwargs)
+    speaker_map, counter, segments = {}, 1, []
+    for turn, _, label in diarization.itertracks(yield_label=True):
+        if label not in speaker_map:
+            speaker_map[label] = f"Speaker_{counter}"
+            counter += 1
+        segments.append({"start": round(turn.start, 3), "end": round(turn.end, 3),
+                         "speaker": speaker_map[label]})
+    return segments
