@@ -15,11 +15,9 @@ from services import vad_union
 from services import (diarization_service, whisper_service, indic_asr_service,
                       embedding_service, clip_service)
 from services import cross_model, diarize_assign
+from services import transcript_service as ts
 from services.hashing import sha256_file
 from services.ffmpeg_service import convert_dual_rate, UnsupportedFormatError
-
-# L7-L8 are still placeholder; Phase 5 replaces them with real layer tasks.
-PLACEHOLDER_STAGES = ["L7", "L8"]
 
 
 def _inbox_original(case_id: str, file_id: str, ext: str) -> str:
@@ -306,18 +304,22 @@ def run_pipeline(job_id: str) -> str:
             s.commit()
         raise
 
-    # Placeholder remainder (Phase 5).
+    # L8 output generation.
     try:
-        for stage in PLACEHOLDER_STAGES:
-            with get_session() as s:
-                repo.update_job(s, job_id, stage=stage)
-                s.commit()
         with get_session() as s:
-            repo.update_job(s, job_id, status=JobStatus.NEEDS_REVIEW)
+            job = repo.get_job(s, job_id)
+            repo.update_job(s, job_id, stage="L8"); s.commit()
+            segs = repo.list_segments(s, job.file_id)
+            src_hash = repo.get_file(s, job.file_id).source_sha256
+            data = ts.build(job.case_id, job.file_id, src_hash, segs,
+                            status="machine_assisted_pending_certification")
+            ts.write(job.case_id, job.file_id, data)
+            au.append_entry(job.case_id, file_id=job.file_id, stage="L8",
+                            parameters={"segments": len(segs)}, session=s)
             s.commit()
+            repo.update_job(s, job_id, status=JobStatus.NEEDS_REVIEW); s.commit()
         return JobStatus.NEEDS_REVIEW
     except Exception as e:
         with get_session() as s:
-            repo.update_job(s, job_id, status=JobStatus.FAILED, error=str(e))
-            s.commit()
+            repo.update_job(s, job_id, status=JobStatus.FAILED, error=str(e)); s.commit()
         raise
