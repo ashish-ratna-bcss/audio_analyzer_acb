@@ -10,7 +10,8 @@ def setup_module():
     dbbase.init_db()
 
 
-def test_run_pipeline_walks_to_needs_review():
+def test_run_pipeline_quarantines_without_input():
+    # No staged original -> L0 cannot find it -> quarantine (never silent-drop).
     with dbbase.get_session() as s:
         case_id = repo.create_case(s)
         file_id = repo.create_file(s, case_id, "a.wav", ".wav")
@@ -18,12 +19,10 @@ def test_run_pipeline_walks_to_needs_review():
         s.commit()
 
     result = ptasks.run_pipeline.apply(args=[job_id]).get()
-    assert result == dbmodels.JobStatus.NEEDS_REVIEW
+    assert result == dbmodels.JobStatus.QUARANTINED
 
     with dbbase.get_session() as s:
-        job = repo.get_job(s, job_id)
-        assert job.status == dbmodels.JobStatus.NEEDS_REVIEW
-        assert job.stage == "L8"
+        assert repo.get_job(s, job_id).status == dbmodels.JobStatus.QUARANTINED
 
 
 def test_run_pipeline_marks_failed_on_bad_job_id():

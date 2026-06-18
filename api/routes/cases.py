@@ -1,5 +1,4 @@
 import os
-import uuid
 
 import aiofiles
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, status
@@ -34,20 +33,21 @@ async def upload_file(case_id: str, audio: UploadFile = File(...)):
         if s.get(Case, case_id) is None:
             raise HTTPException(status_code=404, detail="Unknown case_id")
 
-    # Land the upload under the case store; L0 (Phase 2) hashes + WORM-locks it.
+    # Create the file row first so we can name the staged upload by file_id;
+    # L0 (pipeline) finds it deterministically at cases/{case}/inbox/{file_id}{ext}.
+    with get_session() as s:
+        file_id = repo.create_file(s, case_id, audio.filename or f"upload{ext}", ext)
+        job_id = repo.create_job(s, case_id, file_id)
+        s.commit()
+
     inbox = os.path.join(config.CASE_STORE_PATH, "cases", case_id, "inbox")
     os.makedirs(inbox, exist_ok=True)
-    staged = os.path.join(inbox, f"{uuid.uuid4()}{ext}")
+    staged = os.path.join(inbox, f"{file_id}{ext}")
     content = await audio.read()
     if len(content) > config.MAX_FILE_SIZE_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large")
     async with aiofiles.open(staged, "wb") as f:
         await f.write(content)
-
-    with get_session() as s:
-        file_id = repo.create_file(s, case_id, audio.filename or staged, ext)
-        job_id = repo.create_job(s, case_id, file_id)
-        s.commit()
 
     run_pipeline.delay(job_id)
     return {"file_id": file_id, "job_id": job_id}
