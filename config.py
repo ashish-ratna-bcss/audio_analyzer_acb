@@ -95,5 +95,14 @@ DFN_MODEL = "DeepFilterNet3"          # DeepFilterNet3 enhancement
 DEMUCS_MODEL = "htdemucs_ft"          # HTDemucs separation checkpoint
 
 # --- Phase 4: attribution + multi-pass ASR ---
-INDIC_ASR_MODEL = os.getenv("INDIC_ASR_MODEL", "whisper-te")
+
+# Pass 2: AI4Bharat IndicWhisper — language-specific Whisper fine-tunes.
+# Template: {base}/{lang_code} e.g. ai4bharat/whisper-medium-te
+# Falls back to Whisper large-v3 forced-language if model unavailable.
+INDIC_WHISPER_BASE = os.getenv("INDIC_WHISPER_BASE", "ai4bharat/whisper-medium")
+INDIC_WHISPER_LANGS = ["te", "ta", "kn", "ml", "hi", "mr", "bn", "gu", "pa", "ur"]
+
+# Pass 3: SeamlessM4T v2 — Meta multilingual end-to-end model.
+SEAMLESS_MODEL = os.getenv("SEAMLESS_MODEL", "facebook/seamless-m4t-v2-large")
+
 EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/LaBSE")

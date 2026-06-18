@@ -84,12 +84,12 @@ def list_audit_entries(session, case_id):
 
 def add_segment(session, *, file_id, start, end, speaker, text, confidence,
                 source_pass, flagged, review_status=None, candidates=None,
-                clip_original=None, clip_enhanced=None):
+                detected_language=None, clip_original=None, clip_enhanced=None):
     seg = Segment(file_id=file_id, start=start, end=end, speaker=speaker,
                   text=text, confidence=confidence, source_pass=source_pass,
                   flagged=flagged, review_status=review_status,
-                  candidates=candidates or {}, clip_original=clip_original,
-                  clip_enhanced=clip_enhanced)
+                  candidates=candidates or {}, detected_language=detected_language,
+                  clip_original=clip_original, clip_enhanced=clip_enhanced)
     session.add(seg)
     session.flush()
     return seg.id
@@ -120,11 +120,13 @@ def add_review(session, segment_id, decision, text, reviewer_id):
     return r.id
 
 
-def set_segment_review(session, segment_id, review_status, text=None):
+def set_segment_review(session, segment_id, review_status, text=None, source_pass=None):
     seg = session.get(Segment, segment_id)
     seg.review_status = review_status
     if text is not None:
         seg.text = text
+    if source_pass is not None:
+        seg.source_pass = source_pass
     session.flush()
     return seg
 

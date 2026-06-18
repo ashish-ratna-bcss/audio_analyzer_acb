@@ -15,7 +15,7 @@ def build(case_id, file_id, source_hash, segments, *, status) -> dict:
             "segment_id": s.id,
             "start": s.start, "end": s.end, "speaker": s.speaker,
             "overlap": "+" in (s.speaker or ""),
-            "text": s.text, "language": None,
+            "text": s.text, "language": s.detected_language,
             "confidence": s.confidence, "source_pass": s.source_pass,
             "flagged_for_review": bool(s.flagged),
             "review_status": s.review_status,

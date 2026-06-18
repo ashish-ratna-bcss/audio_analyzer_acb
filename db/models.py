@@ -68,6 +68,7 @@ class Segment(Base):
     flagged: Mapped[bool] = mapped_column(Boolean, default=False)
     review_status: Mapped[str | None] = mapped_column(String, nullable=True)
     candidates: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    detected_language: Mapped[str | None] = mapped_column(String, nullable=True)
     clip_original: Mapped[str | None] = mapped_column(String, nullable=True)
     clip_enhanced: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

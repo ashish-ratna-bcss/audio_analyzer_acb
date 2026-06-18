@@ -13,7 +13,7 @@ from services import manifest_service as man
 from services import vad_service, enhancement_service, separation_service
 from services import vad_union
 from services import (diarization_service, whisper_service, indic_asr_service,
-                      embedding_service, clip_service)
+                      seamless_service, embedding_service, clip_service)
 from services import cross_model, diarize_assign
 from services import transcript_service as ts
 from services.hashing import sha256_file
@@ -152,9 +152,10 @@ def _whisper_clip(clip_path, task):
     res = whisper_service.transcribe(clip_path, language="auto", use_vad=False, task=task)
     segs = res["segments"]
     if not segs:
-        return {"text": "", "confidence": 0.0}
+        return {"text": "", "confidence": 0.0, "language": res.get("language", "und")}
     return {"text": " ".join(s["text"] for s in segs).strip(),
-            "confidence": round(sum(s["confidence"] for s in segs) / len(segs), 3)}
+            "confidence": round(sum(s["confidence"] for s in segs) / len(segs), 3),
+            "language": res.get("language", "und")}
 
 
 def _l4_diarize(job, in48, session):
@@ -184,27 +185,44 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
         clip_service.cut(enh_source, region["start"], region["end"], clip_enh)
         clip_service.cut(original16, region["start"], region["end"], clip_org)
 
+        # Pass 1: Whisper large-v3, enhanced audio, auto language detect
         p1 = _whisper_clip(clip_enh, "transcribe")
-        p2 = _whisper_clip(clip_org, "transcribe")
-        p3 = indic_asr_service.transcribe_clip(clip_org)
-        texts = {"pass1_enhanced": p1["text"], "pass2_original": p2["text"],
-                 "pass3_indic": p3["text"]}
-        confs = {"pass1_enhanced": p1["confidence"], "pass2_original": p2["confidence"],
-                 "pass3_indic": p3["confidence"]}
+        detected_lang = p1.get("language") or "und"
+
+        # Pass 2: IndicWhisper (AI4Bharat), language-routed by pass1 detection
+        p2 = indic_asr_service.transcribe_clip(clip_enh, detected_lang)
+
+        # Pass 3: SeamlessM4T v2, language-routed by pass1 detection
+        p3 = seamless_service.transcribe_clip(clip_enh, detected_lang)
+
+        candidates = {
+            "pass1_whisper": {"text": p1["text"], "confidence": p1["confidence"],
+                              "language": detected_lang},
+            "pass2_indic_whisper": {"text": p2["text"], "confidence": p2["confidence"],
+                                    "language": detected_lang},
+            "pass3_seamless": {"text": p3["text"], "confidence": p3["confidence"],
+                               "language": detected_lang},
+        }
+        texts = {k: v["text"] for k, v in candidates.items()}
+        confs = {k: v["confidence"] for k, v in candidates.items()}
+
         sim = embedding_service.similarity(p1["text"], p2["text"])
         verdict = cross_model.compare_passes(texts, confs, vad_positive=True,
                                              embedding_sim=sim)
         spk = diarize_assign.assign_speakers(region, turns)
+
+        # Default winner = pass1_whisper (Whisper large-v3 on enhanced audio)
         winning = p1["text"] or p2["text"] or p3["text"]
-        source_pass = ("pass1_enhanced" if p1["text"] else
-                       "pass2_original" if p2["text"] else "pass3_indic")
+        source_pass = "pass1_whisper"
+
         seg_id = repo.add_segment(
             session, file_id=job.file_id, start=region["start"], end=region["end"],
             speaker="+".join(spk["speakers"]), text=winning,
             confidence=verdict["confidence"], source_pass=source_pass,
             flagged=verdict["flagged"],
             review_status="pending" if verdict["flagged"] else "auto_accepted",
-            candidates=texts, clip_original=clip_org, clip_enhanced=clip_enh)
+            candidates=candidates, clip_original=clip_org, clip_enhanced=clip_enh,
+            detected_language=detected_lang)
         if verdict["flagged"]:
             flagged_count += 1
         per_segment.append({
