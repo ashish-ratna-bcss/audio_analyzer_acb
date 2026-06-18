@@ -59,7 +59,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CASE_STORE_PATH=/data/forensic-audio
       - CUDA_VISIBLE_DEVICES=0
-    command: celery -A pipeline.celery_app worker -Q gpu_queue --concurrency=1 -n gpu@%h
+    command: celery -A pipeline.celery_app worker -Q gpu_queue --concurrency=1 --pool=solo -n gpu@%h
     volumes:
       - case_data:/data/forensic-audio
       - model_cache:/app/model_cache
