@@ -1,4 +1,4 @@
-from db.models import Case, File, Job, JobStatus, AuditEntry, Segment
+from db.models import Case, File, Job, JobStatus, AuditEntry, Segment, Review
 
 
 def create_case(session) -> str:
@@ -102,3 +102,39 @@ def get_segment(session, segment_id: str):
 def list_segments(session, file_id):
     return (session.query(Segment).filter(Segment.file_id == file_id)
             .order_by(Segment.start).all())
+
+
+def list_flagged_segments(session, case_id, review_status=None):
+    q = (session.query(Segment).join(File, Segment.file_id == File.id)
+         .filter(File.case_id == case_id, Segment.flagged == True))  # noqa: E712
+    if review_status:
+        q = q.filter(Segment.review_status == review_status)
+    return q.order_by(Segment.confidence).all()
+
+
+def add_review(session, segment_id, decision, text, reviewer_id):
+    r = Review(segment_id=segment_id, decision=decision, text=text,
+               reviewer_id=reviewer_id)
+    session.add(r)
+    session.flush()
+    return r.id
+
+
+def set_segment_review(session, segment_id, review_status, text=None):
+    seg = session.get(Segment, segment_id)
+    seg.review_status = review_status
+    if text is not None:
+        seg.text = text
+    session.flush()
+    return seg
+
+
+def count_pending_flagged(session, file_id):
+    return (session.query(Segment)
+            .filter(Segment.file_id == file_id, Segment.flagged == True,  # noqa: E712
+                    Segment.review_status == "pending").count())
+
+
+def latest_job_for_file(session, file_id):
+    return (session.query(Job).filter(Job.file_id == file_id)
+            .order_by(Job.created_at.desc()).first())

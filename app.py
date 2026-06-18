@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 import config
 from api.routes.cases import router as cases_router
+from api.routes.review import router as review_router
 
 
 @asynccontextmanager
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Forensic Audio Pipeline API", version="2.0.0", lifespan=lifespan)
 app.include_router(cases_router)
+app.include_router(review_router)
 
 
 @app.get("/health")
