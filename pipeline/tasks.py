@@ -130,9 +130,10 @@ def _l3_vad_union(job, in16, enhanced, stem, session):
 
     union = vad_union.union_segments(list(branches.values()))
     branch_counts = {k: len(v) for k, v in branches.items()}
-    # Additive guarantee: union has at least as many regions as any branch.
+    # Additive guarantee: union covers at least as much duration as any branch.
+    # (segment count may decrease when overlapping regions merge)
     for name, segs in branches.items():
-        reconcile.check(f"L3:{name}", len(segs), "L3:union", len(union))
+        reconcile.check(f"L3:{name}", vad_union.total_duration(segs), "L3:union", vad_union.total_duration(union))
 
     out = storage.derivative_path(job.case_id, job.file_id, "vad",
                                   f"{job.file_id}_segments_union.json")
