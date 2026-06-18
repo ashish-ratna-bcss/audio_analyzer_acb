@@ -39,6 +39,34 @@ def convert_to_wav(input_path: str, output_path: str) -> str:
     return output_path
 
 
+def _ffmpeg_pcm(input_path: str, output_path: str, sample_rate: int) -> str:
+    cmd = [
+        "ffmpeg", "-y", "-i", input_path,
+        "-vn", "-map", "0:a:0?",
+        "-acodec", "pcm_s16le",
+        "-af", "aresample=async=1:first_pts=0",
+        "-ac", "1", "-ar", str(sample_rate),
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"FFmpeg failed: {result.stderr}")
+    return output_path
+
+
+def convert_dual_rate(input_path: str, out_48k: str, out_16k: str):
+    """Normalize to 48kHz mono (enhance/diar) + 16kHz mono (ASR), same decode
+    recipe as convert_to_wav."""
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"Audio file not found: {input_path}")
+    ext = os.path.splitext(input_path)[1].lower()
+    if ext not in config.ALLOWED_EXTENSIONS:
+        raise UnsupportedFormatError(f"Unsupported format: {ext}")
+    _ffmpeg_pcm(input_path, out_48k, 48000)
+    _ffmpeg_pcm(input_path, out_16k, 16000)
+    return out_48k, out_16k
+
+
 def measure_mean_volume(path: str):
     """Mean loudness of the audio in dBFS via ffmpeg volumedetect.
 
