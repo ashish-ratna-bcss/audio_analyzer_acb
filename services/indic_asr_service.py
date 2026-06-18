@@ -24,16 +24,15 @@ def _load():
     global _model
     if _model is None:
         from transformers import AutoModel
-        logger.info("Loading IndicConformer-600M (%s)…", config.INDIC_CONFORMER_MODEL)
+        logger.info("Loading IndicConformer-600M (%s) on CPU…", config.INDIC_CONFORMER_MODEL)
         _model = AutoModel.from_pretrained(
             config.INDIC_CONFORMER_MODEL,
             trust_remote_code=True,
         )
-        if config.WHISPER_DEVICE == "cuda":
-            import torch
-            _model = _model.to("cuda")
+        # Keep on CPU — IndicConformer uses custom TorchScript CUDA kernels that
+        # fail JIT compilation under torch 2.3.0 + CUDA 12.1 (nvrtc C++ template errors).
         _model.eval()
-        logger.info("IndicConformer-600M loaded.")
+        logger.info("IndicConformer-600M loaded on CPU.")
     return _model
 
 
@@ -55,9 +54,7 @@ def transcribe_clip(wav_path: str, lang_code: str) -> dict:
             wav = torch.mean(wav, dim=0, keepdim=True)  # mono [1, T]
             if sr != 16000:
                 wav = torchaudio.transforms.Resample(sr, 16000)(wav)
-            if config.WHISPER_DEVICE == "cuda":
-                wav = wav.to("cuda")
-
+            # wav stays on CPU to match model device (CUDA causes kernel JIT failure)
             result = model(wav, lang_code, "rnnt")
             if isinstance(result, (list, tuple)):
                 text = result[0] if result else ""
