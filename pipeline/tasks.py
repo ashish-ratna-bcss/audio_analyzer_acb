@@ -204,7 +204,8 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
             speaker="+".join(spk["speakers"]), text=winning,
             confidence=verdict["confidence"], source_pass=source_pass,
             flagged=verdict["flagged"],
-            review_status="pending" if verdict["flagged"] else "auto_accepted")
+            review_status="pending" if verdict["flagged"] else "auto_accepted",
+            candidates=texts, clip_original=clip_org, clip_enhanced=clip_enh)
         if verdict["flagged"]:
             flagged_count += 1
         per_segment.append({
