@@ -1,7 +1,7 @@
 import os
 
 import aiofiles
-from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, status
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends, status
 
 import config
 from api.auth import require_api_key
@@ -24,7 +24,8 @@ def create_case():
 
 @router.post("/cases/{case_id}/files", status_code=status.HTTP_202_ACCEPTED,
              dependencies=[Depends(require_api_key)])
-async def upload_file(case_id: str, audio: UploadFile = File(...)):
+async def upload_file(case_id: str, audio: UploadFile = File(...),
+                      separate: bool = Form(default=False)):
     ext = os.path.splitext(audio.filename or "")[1].lower()
     if ext not in config.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {ext}")
@@ -37,7 +38,7 @@ async def upload_file(case_id: str, audio: UploadFile = File(...)):
     # L0 (pipeline) finds it deterministically at cases/{case}/inbox/{file_id}{ext}.
     with get_session() as s:
         file_id = repo.create_file(s, case_id, audio.filename or f"upload{ext}", ext)
-        job_id = repo.create_job(s, case_id, file_id)
+        job_id = repo.create_job(s, case_id, file_id, options={"separate": separate})
         s.commit()
 
     inbox = os.path.join(config.CASE_STORE_PATH, "cases", case_id, "inbox")

@@ -49,6 +49,7 @@ class Job(Base):
     status: Mapped[str] = mapped_column(String, default=JobStatus.QUEUED, index=True)
     stage: Mapped[str | None] = mapped_column(String, nullable=True)
     degraded_flags: Mapped[list | None] = mapped_column(JSON, default=list)
+    options: Mapped[dict | None] = mapped_column(JSON, default=dict)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

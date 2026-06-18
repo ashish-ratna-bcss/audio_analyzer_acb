@@ -16,9 +16,9 @@ def create_file(session, case_id: str, original_filename: str, ext: str) -> str:
     return f.id
 
 
-def create_job(session, case_id: str, file_id: str) -> str:
+def create_job(session, case_id: str, file_id: str, options=None) -> str:
     job = Job(case_id=case_id, file_id=file_id, status=JobStatus.QUEUED,
-              stage=None, degraded_flags=[])
+              stage=None, degraded_flags=[], options=options or {})
     session.add(job)
     session.flush()
     return job.id
