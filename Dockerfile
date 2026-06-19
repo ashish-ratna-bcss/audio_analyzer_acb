@@ -24,6 +24,7 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 ARG INSTALL_NEMO=false
 COPY requirements_nemo.txt .
 RUN if [ "$INSTALL_NEMO" = "true" ]; then \
+        pip3 install --no-cache-dir "Cython>=3.0" "setuptools<76" wheel && \
         pip3 install --no-cache-dir -r requirements_nemo.txt ; \
     else \
         echo "Skipping NeMo (Sortformer pilot) — set INSTALL_NEMO=true to include." ; \

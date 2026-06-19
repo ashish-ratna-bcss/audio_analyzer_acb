@@ -41,7 +41,7 @@ def _parse_segment(entry) -> tuple | None:
     speaker_0") or a sequence/tuple of those three fields. Be liberal about both.
     """
     if isinstance(entry, str):
-        parts = entry.split()
+        parts = [p for p in re.split(r"[,\s]+", entry.strip()) if p]
     elif isinstance(entry, (list, tuple)):
         parts = [str(p) for p in entry]
     else:
@@ -67,10 +67,14 @@ def diarize_with_overlap(audio_path: str, num_speakers: int | None = None) -> Li
     # NeMo 2.x: diarize() returns a list (one item per input audio) of predicted
     # speaker-active segments. Overlapping speakers yield separate, time-overlapping
     # entries — retained as distinct turns (do NOT collapse).
-    preds = model.diarize(audio=[audio_path], batch_size=1, include_tensor_outputs=False)
+    preds = model.diarize(audio=[audio_path], batch_size=1)
 
-    # preds is a list per file; take the first (single file in).
-    file_preds = preds[0] if preds else []
+    # diarize() returns either a flat list of "begin end speaker" segments (single
+    # audio) or a list-of-lists (one per input audio). Normalize to this file's list.
+    if preds and isinstance(preds[0], (list, tuple)):
+        file_preds = preds[0]
+    else:
+        file_preds = preds or []
 
     speaker_map: dict[str, str] = {}
     counter = 1

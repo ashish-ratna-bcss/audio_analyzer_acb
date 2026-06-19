@@ -8,7 +8,10 @@ services:
     restart: unless-stopped
 
   api:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_NEMO: "${INSTALL_NEMO:-false}"
     image: forensic-audio
     env_file: .env
     environment:
@@ -37,7 +40,10 @@ services:
 
   worker-cpu:
     image: forensic-audio
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_NEMO: "${INSTALL_NEMO:-false}"
     env_file: .env
     environment:
       - DATABASE_URL=postgresql+psycopg2://pipeline:pipeline@postgres:5432/forensic
@@ -52,7 +58,10 @@ services:
 
   worker-gpu:
     image: forensic-audio
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_NEMO: "${INSTALL_NEMO:-false}"
     env_file: .env
     environment:
       - DATABASE_URL=postgresql+psycopg2://pipeline:pipeline@postgres:5432/forensic
@@ -76,7 +85,10 @@ services:
 
   flower:
     image: forensic-audio
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_NEMO: "${INSTALL_NEMO:-false}"
     env_file: .env
     environment:
       - REDIS_URL=redis://redis:6379/0

@@ -1,4 +1,10 @@
-# Optional NeMo requirements for Phase 2 Sortformer Diarization Pilot
-# Use a separate layer to avoid conflicts with the base pipeline
-nemo_toolkit[asr]==1.23.0
+# Optional NeMo requirements for Phase 2 Sortformer Diarization Pilot.
+# Installed only when the image is built with --build-arg INSTALL_NEMO=true,
+# in its own pip layer to keep conflicts isolated from the base ASR stack.
+#
+# Sortformer (SortformerEncLabelModel + nvidia/diar_sortformer_4spk-v1) was added
+# in NeMo 2.x — the previous 1.23.0 pin did NOT contain it. >=2.2.0 includes it.
+# Cython must be present before nemo builds (handled in the Dockerfile RUN).
+Cython>=3.0
+nemo_toolkit[asr]>=2.2.0
 pyannote.metrics
