@@ -12,7 +12,10 @@ def load_pipeline():
             config.DIARIZATION_MODEL,
             use_auth_token=config.PYANNOTE_AUTH_TOKEN,
         )
-        _pipeline.to(torch.device(config.WHISPER_DEVICE))
+        # Run pyannote on CPU to avoid CUDA state conflicts with DeepFilterNet/Whisper
+        # cuDNN Conv layers in DF trigger CUDNN_STATUS_NOT_SUPPORTED warnings that
+        # corrupt CUDA context for subsequent pyannote .to("cuda") calls on A10G.
+        _pipeline.to(torch.device("cpu"))
     return _pipeline
 
 
