@@ -38,62 +38,41 @@ def _load():
 
 
 def transcribe_clip(wav_path: str, lang_code: str) -> dict:
+    """Pass 2 ASR — IndicConformer-600M only. Independent of Whisper.
+
+    On a language IndicConformer does not cover, ABSTAIN (empty + flag). Never
+    silently fall back to Whisper — that would break model independence and let
+    pass 2 masquerade as pass 1. Confidence is None ("unscored"): the CTC
+    checkpoint exposes no score, and a fabricated constant must not enter the
+    forensic record.
     """
-    Pass 2 ASR. lang_code: ISO 639-1 from MMS-LID routing (not Whisper).
-    For Indic languages: runs IndicConformer-600M (real model, not Whisper).
-    For non-Indic: runs Whisper large-v3 forced to lang_code.
-    """
-    model_used = config.INDIC_CONFORMER_MODEL
+    if lang_code not in _INDIC_SUPPORTED:
+        return {"text": "", "confidence": None, "language": lang_code,
+                "model": "indic_unsupported", "abstained": True}
+    try:
+        import torch
+        import torchaudio
 
-    if lang_code in _INDIC_SUPPORTED:
-        try:
-            import torch
-            import torchaudio
-
-            model = _load()
-            wav, sr = torchaudio.load(wav_path)
-            wav = torch.mean(wav, dim=0, keepdim=True)  # mono [1, T]
-            if sr != 16000:
-                wav = torchaudio.transforms.Resample(sr, 16000)(wav)
-            if config.WHISPER_DEVICE == "cuda":
-                wav = wav.to("cuda")
-            # Disable nvFuser for this call — it generates invalid CUDA C++ (nvrtc template
-            # errors) for conformer layers under torch 2.3 + CUDA 12.1. "none" forces eager
-            # mode without any kernel fusion; functionally identical, runs on GPU.
-            with torch.jit.fuser("none"):
-                result = model(wav, lang_code, "ctc")
-            if isinstance(result, (list, tuple)):
-                text = result[0] if result else ""
-            else:
-                text = result or ""
-            text = str(text).strip()
-
-            confidence = 0.75 if text else 0.0
-            return {
-                "text": text,
-                "confidence": confidence,
-                "language": lang_code,
-                "model": model_used,
-            }
-
-        except Exception as exc:
-            logger.warning(
-                "IndicConformer failed for %s (lang=%s): %s. Falling back to Whisper forced.",
-                wav_path, lang_code, exc,
-            )
-            model_used = "whisper_forced_lang_fallback"
-
-    else:
-        # Non-Indic language — IndicConformer doesn't cover it.
-        model_used = "whisper_forced_lang"
-
-    # Fallback: Whisper large-v3 forced to routing lang
-    from services import whisper_service
-    lang = lang_code if lang_code and lang_code != "und" else "auto"
-    res = whisper_service.transcribe(wav_path, language=lang, use_vad=False)
-    segs = res["segments"]
-    if not segs:
-        return {"text": "", "confidence": 0.0, "language": lang_code, "model": model_used}
-    text = " ".join(s["text"] for s in segs).strip()
-    conf = round(sum(s["confidence"] for s in segs) / len(segs), 3)
-    return {"text": text, "confidence": conf, "language": lang_code, "model": model_used}
+        model = _load()
+        wav, sr = torchaudio.load(wav_path)
+        wav = torch.mean(wav, dim=0, keepdim=True)  # mono [1, T]
+        if sr != 16000:
+            wav = torchaudio.transforms.Resample(sr, 16000)(wav)
+        if config.WHISPER_DEVICE == "cuda":
+            wav = wav.to("cuda")
+        # Disable nvFuser for this call — it generates invalid CUDA C++ (nvrtc template
+        # errors) for conformer layers under torch 2.3 + CUDA 12.1. "none" forces eager
+        # mode without any kernel fusion; functionally identical, runs on GPU.
+        with torch.jit.fuser("none"):
+            result = model(wav, lang_code, "ctc")
+        if isinstance(result, (list, tuple)):
+            text = (result[0] if result else "") or ""
+        else:
+            text = result or ""
+        text = str(text).strip()
+        return {"text": text, "confidence": None, "language": lang_code,
+                "model": config.INDIC_CONFORMER_MODEL, "abstained": False}
+    except Exception as exc:
+        logger.warning("IndicConformer failed for %s (lang=%s): %s", wav_path, lang_code, exc)
+        return {"text": "", "confidence": None, "language": lang_code,
+                "model": "indic_error", "abstained": True}

@@ -29,6 +29,8 @@ _NO_STUB_MODULES = {
     "test_whisper_service", "test_translation_service", "test_diarization_service",
     "test_cross_model", "test_diarize_assign", "test_vad_union",
     "test_recall_wrappers_import", "test_phase4_wrappers_import",
+    "test_indic_abstain", "test_hallucination_filter", "test_lang_vote",
+    "test_preprocess_service", "test_transcript_outputs",
 }
 
 
@@ -66,7 +68,8 @@ def _stub_models(monkeypatch, request):
                 {"start": 0.0, "end": 1.0, "text": "stub", "confidence": 0.9,
                  "no_speech_prob": 0.1, "compression_ratio": 1.0}]}, raising=False)
         monkeypatch.setattr(indic_asr_service, "transcribe_clip",
-            lambda p: {"text": "stub", "confidence": 0.5}, raising=False)
+            lambda p, lang=None: {"text": "stub", "confidence": None, "language": lang,
+                                  "model": "stub", "abstained": False}, raising=False)
         monkeypatch.setattr(embedding_service, "similarity", lambda a, b: 0.95, raising=False)
     except Exception:
         pass
