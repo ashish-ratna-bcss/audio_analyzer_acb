@@ -1,3 +1,26 @@
+def selfcheck_confidence(enh_text: str, org_text: str, *, embed_fn) -> dict:
+    """Single-model validation: agreement between IndicConformer on the enhanced
+    clip vs the original clip. Replaces 3-way cross-model consensus now that there
+    is one ASR model. Agreement = embedding cosine penalized by length-ratio
+    divergence. Returns {agreement, confidence} in [0,1]; never raises.
+
+    Both runs are the SAME model, so high agreement means enhancement did not
+    change the words (stable, trustworthy); low agreement means the enhanced and
+    original decodes diverge -> flag for review.
+    """
+    a, b = (enh_text or "").strip(), (org_text or "").strip()
+    if not a or not b:
+        return {"agreement": 0.0, "confidence": 0.0}
+    try:
+        cos = float(embed_fn(a, b))
+    except Exception:
+        return {"agreement": 0.0, "confidence": 0.0}
+    la, lb = len(a.split()), len(b.split())
+    length_ratio = min(la, lb) / max(la, lb) if max(la, lb) else 0.0
+    agreement = round(max(0.0, min(1.0, cos)) * length_ratio, 3)
+    return {"agreement": agreement, "confidence": agreement}
+
+
 def normalized_edit_distance(a: str, b: str) -> float:
     a, b = a.strip(), b.strip()
     if not a and not b:

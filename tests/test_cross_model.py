@@ -1,8 +1,47 @@
-from services.cross_model import normalized_edit_distance, compare_passes
+from services.cross_model import (normalized_edit_distance, compare_passes,
+                                  selfcheck_confidence)
 
 
 def _stub_embed(score):
     return lambda a, b: score
+
+
+def test_selfcheck_identical_high():
+    r = selfcheck_confidence("ధర పదిహేను", "ధర పదిహేను", embed_fn=_stub_embed(0.98))
+    assert r["agreement"] >= 0.9
+    assert r["confidence"] >= 0.9
+
+
+def test_selfcheck_divergent_low():
+    r = selfcheck_confidence("hello world here", "totally different text",
+                             embed_fn=_stub_embed(0.15))
+    assert r["agreement"] < 0.6
+    assert r["confidence"] < 0.6
+
+
+def test_selfcheck_one_empty_is_zero():
+    r = selfcheck_confidence("something said", "", embed_fn=_stub_embed(0.9))
+    assert r["agreement"] == 0.0
+    assert r["confidence"] == 0.0
+
+
+def test_selfcheck_both_empty_zero():
+    r = selfcheck_confidence("", "", embed_fn=_stub_embed(0.0))
+    assert r["agreement"] == 0.0
+
+
+def test_selfcheck_length_mismatch_penalized():
+    # same embedding score but very different lengths -> penalized below raw cosine
+    r = selfcheck_confidence("a b c d e f g h", "a", embed_fn=_stub_embed(0.9))
+    assert r["agreement"] < 0.9
+
+
+def test_selfcheck_embed_failure_degrades():
+    def boom(a, b):
+        raise RuntimeError("down")
+    r = selfcheck_confidence("x y z", "x y z", embed_fn=boom)
+    assert r["agreement"] == 0.0
+    assert r["confidence"] == 0.0
 
 
 def test_edit_distance_bounds():
