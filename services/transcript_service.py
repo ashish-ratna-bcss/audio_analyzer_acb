@@ -81,6 +81,41 @@ def build_validation_report(file_id, segments) -> dict:
     return {"file_id": file_id, "segments": out, "summary": summary}
 
 
+def _mmss(t: float) -> str:
+    """Seconds -> MM.SS (floored), zero-padded, matching the court table style."""
+    t = max(0.0, float(t))
+    m = int(t // 60)
+    s = int(t % 60)
+    return f"{m:02d}.{s:02d}"
+
+
+def build_conversation_table(file_id, segments) -> dict:
+    """Court-ready Time/Person/Conversation table from the final transcript.
+    Skips empty segments; numbers sequentially; MM.SS timestamps. Person is the
+    diarization speaker label (renamed to A.O / Complt by a human in review)."""
+    rows = []
+    for s in sorted(segments, key=lambda x: x.start):
+        txt = (getattr(s, "text", "") or "").strip()
+        if not txt:
+            continue
+        rows.append({
+            "sl": len(rows) + 1,
+            "time": _mmss(s.start),
+            "person": s.speaker,
+            "conversation": txt,
+            "language": getattr(s, "detected_language", None),
+        })
+    return {"file_id": file_id, "rows": rows}
+
+
+def render_conversation_markdown(table: dict) -> str:
+    lines = ["| Sl | Time | Person | Conversation |", "|--|--|--|--|"]
+    for r in table["rows"]:
+        conv = r["conversation"].replace("|", "\\|")
+        lines.append(f"| {r['sl']} | {r['time']} | {r['person']} | {conv} |")
+    return "\n".join(lines)
+
+
 def write_named(case_id, file_id, name, data) -> str:
     path = storage.derivative_path(case_id, file_id, "final", f"{file_id}_{name}.json")
     with open(path, "w") as f:

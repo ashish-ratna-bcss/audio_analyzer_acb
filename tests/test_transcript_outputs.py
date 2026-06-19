@@ -41,3 +41,32 @@ def test_validation_report_shape():
     assert seg["consensus_pass"] == "pass1_whisper"
     assert "summary" in r
     assert r["summary"]["segments_total"] == 1
+
+
+def _table_segs():
+    return [
+        SimpleNamespace(id="a", start=328.45, end=329.0, speaker="Speaker_1",
+                        detected_language="te", text="వచ్చేసినవా?"),
+        SimpleNamespace(id="b", start=329.3, end=330.0, speaker="Speaker_2",
+                        detected_language="te", text=""),       # empty -> skipped
+        SimpleNamespace(id="c", start=393.0, end=393.9, speaker="Speaker_1",
+                        detected_language="te", text="సరే"),
+    ]
+
+
+def test_conversation_table_json():
+    t = ts.build_conversation_table("f1", _table_segs())
+    rows = t["rows"]
+    assert len(rows) == 2                       # empty segment dropped
+    assert rows[0]["sl"] == 1
+    assert rows[0]["time"] == "05.28"           # 328.45s -> MM.SS (floored seconds)
+    assert rows[0]["person"] == "Speaker_1"
+    assert rows[0]["conversation"] == "వచ్చేసినవా?"
+    assert rows[1]["time"] == "06.33"
+
+
+def test_conversation_table_markdown():
+    md = ts.render_conversation_markdown(ts.build_conversation_table("f1", _table_segs()))
+    assert "| Sl | Time | Person | Conversation |" in md
+    assert "వచ్చేసినవా?" in md
+    assert "05.28" in md
