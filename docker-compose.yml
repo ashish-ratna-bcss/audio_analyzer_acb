@@ -8,10 +8,7 @@ services:
     restart: unless-stopped
 
   api:
-    build:
-      context: .
-      args:
-        INSTALL_NEMO: "${INSTALL_NEMO:-false}"
+    build: .
     image: forensic-audio
     env_file: .env
     environment:
@@ -40,10 +37,7 @@ services:
 
   worker-cpu:
     image: forensic-audio
-    build:
-      context: .
-      args:
-        INSTALL_NEMO: "${INSTALL_NEMO:-false}"
+    build: .
     env_file: .env
     environment:
       - DATABASE_URL=postgresql+psycopg2://pipeline:pipeline@postgres:5432/forensic
@@ -58,10 +52,7 @@ services:
 
   worker-gpu:
     image: forensic-audio
-    build:
-      context: .
-      args:
-        INSTALL_NEMO: "${INSTALL_NEMO:-false}"
+    build: .
     env_file: .env
     environment:
       - DATABASE_URL=postgresql+psycopg2://pipeline:pipeline@postgres:5432/forensic
@@ -85,16 +76,38 @@ services:
 
   flower:
     image: forensic-audio
-    build:
-      context: .
-      args:
-        INSTALL_NEMO: "${INSTALL_NEMO:-false}"
+    build: .
     env_file: .env
     environment:
       - REDIS_URL=redis://redis:6379/0
     command: celery -A pipeline.celery_app flower --port=5555
     ports: ["5555:5555"]
     depends_on: [redis]
+    restart: unless-stopped
+
+  # Sortformer diarization sidecar — isolated NeMo/torch. Built only when piloting:
+  #   docker compose --profile sortformer build sortformer
+  #   docker compose --profile sortformer up -d sortformer
+  # Enable use by setting DIARIZER=sortformer in .env (worker-gpu reaches it at
+  # http://sortformer:9000). Base image is never touched.
+  sortformer:
+    profiles: ["sortformer"]
+    build:
+      context: .
+      dockerfile: Dockerfile.sortformer
+    image: forensic-sortformer
+    environment:
+      - SORTFORMER_NEMO_MODEL=nvidia/diar_sortformer_4spk-v1
+    volumes:
+      - case_data:/data/forensic-audio
+      - hf_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
 volumes:

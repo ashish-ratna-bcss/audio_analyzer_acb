@@ -17,18 +17,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# NeMo / Sortformer is an OPT-IN pilot layer only. nemo_toolkit pins older
-# transformers/numpy that conflict with the base ASR stack, so it is NOT built
-# into the production image by default. Enable explicitly to evaluate Sortformer:
-#   docker build --build-arg INSTALL_NEMO=true ...
-ARG INSTALL_NEMO=false
-COPY requirements_nemo.txt .
-RUN if [ "$INSTALL_NEMO" = "true" ]; then \
-        pip3 install --no-cache-dir "Cython>=3.0" "setuptools<76" wheel && \
-        pip3 install --no-cache-dir -r requirements_nemo.txt ; \
-    else \
-        echo "Skipping NeMo (Sortformer pilot) — set INSTALL_NEMO=true to include." ; \
-    fi
+# NeMo is intentionally NOT installed here. It conflicts with this image's
+# torch/torchaudio (proven: breaks libtorchaudio). Sortformer runs in the
+# separate `sortformer` sidecar (Dockerfile.sortformer) with its own torch.
 
 COPY . .
 

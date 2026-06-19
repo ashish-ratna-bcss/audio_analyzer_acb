@@ -1,0 +1,28 @@
+# Sortformer diarization sidecar — ISOLATED from the base ASR image.
+# NeMo pins its own torch/torchaudio here, so its conflicts can never break the
+# base IndicConformer pipeline (which runs in the separate forensic-audio image).
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-dev build-essential ffmpeg bash git \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Build deps first, then NeMo (its own torch), then the thin server stack.
+RUN pip3 install --no-cache-dir "Cython>=3.0" "setuptools<76" wheel
+COPY requirements_nemo.txt .
+RUN pip3 install --no-cache-dir -r requirements_nemo.txt
+RUN pip3 install --no-cache-dir fastapi==0.111.0 "uvicorn[standard]==0.29.0" \
+        pydantic==2.7.1 librosa==0.10.2 soundfile==0.12.1
+
+COPY . .
+
+EXPOSE 9000
+
+CMD ["uvicorn", "sortformer_server:app", "--host", "0.0.0.0", "--port", "9000"]

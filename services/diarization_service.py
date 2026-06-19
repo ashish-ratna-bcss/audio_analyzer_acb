@@ -73,8 +73,16 @@ def diarize_with_overlap(audio_path: str, num_speakers: int | None = None) -> li
     yield multiple turns rather than being collapsed to one speaker. Dispatches
     to Sortformer if configured."""
     if getattr(config, "DIARIZER", "pyannote") == "sortformer":
-        from services.sortformer_service import diarize_with_overlap as sortformer_diarize
-        return sortformer_diarize(audio_path, num_speakers)
+        # Sortformer runs in a separate sidecar (own NeMo/torch). On any failure
+        # fall back to pyannote so L4 never breaks the job.
+        try:
+            from services import sortformer_client
+            segs = sortformer_client.diarize_with_overlap(audio_path, num_speakers)
+            if segs:
+                return segs
+            logger.warning("Sortformer returned no segments; falling back to pyannote.")
+        except Exception as e:
+            logger.warning("Sortformer sidecar failed (%s); falling back to pyannote.", e)
 
     pipeline = load_pipeline()
     kwargs = {}
