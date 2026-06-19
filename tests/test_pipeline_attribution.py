@@ -29,61 +29,64 @@ def _mock_models(monkeypatch):
     monkeypatch.setattr(diarization_service, "diarize_with_overlap",
                         lambda p, num_speakers=None: [
                             {"start": 0.0, "end": 1.0, "speaker": "Speaker_1"}])
-    monkeypatch.setattr(whisper_service, "transcribe",
-                        lambda path, **k: {"language": "te", "duration": 1.0,
-                            "segments": [{"start": 0.0, "end": 1.0,
-                            "text": "hello cost fifteen", "confidence": 0.9,
-                            "no_speech_prob": 0.1, "compression_ratio": 1.2}]})
     monkeypatch.setattr(lang_id_service, "identify",
                         lambda p: {"top1": "tel", "top1_confidence": 0.9,
                                    "top2": None, "top2_confidence": 0.0})
+    # IndicConformer is the only ASR model now; run twice (enh + org) per segment.
     monkeypatch.setattr(indic_asr_service, "transcribe_clip",
                         lambda p, lang=None: {"text": "hello cost fifteen",
                             "confidence": None, "language": lang,
                             "model": "indic", "abstained": False})
-    monkeypatch.setattr(seamless_service, "transcribe_clip",
-                        lambda p, lang=None: {"text": "hello cost fifteen",
-                            "confidence": 0.8, "language": lang})
-    monkeypatch.setattr(embedding_service, "similarity", lambda a, b: 0.95)
+    monkeypatch.setattr(embedding_service, "similarity", lambda a, b: 0.97)
 
 
-def test_run_models_independent_indic_abstains_non_indic():
+def test_run_indic_abstains_non_indic():
+    # routed to a non-Indic language -> IndicConformer abstains, no fallback.
     with patch.object(ptasks.lang_id_service, "identify",
                       return_value={"top1": "kor", "top1_confidence": 0.9,
                                     "top2": None, "top2_confidence": 0.0}), \
          patch.object(ptasks.lang_id_service, "to_iso639_1", return_value="ko"), \
-         patch.object(ptasks, "_whisper_clip",
-                      return_value={"text": "annyeong", "confidence": 0.7,
-                                    "language": "ko", "no_speech_prob": 0.1}), \
          patch.object(ptasks.indic_asr_service, "transcribe_clip",
                       return_value={"text": "", "confidence": None, "language": "ko",
                                     "model": "indic_unsupported", "abstained": True}), \
-         patch.object(ptasks.seamless_service, "transcribe_clip",
-                      return_value={"text": "annyeong", "confidence": 0.6, "language": "ko"}):
-        asr = ptasks.run_models("/tmp/clean.wav", file_prior=None)
+         patch.object(ptasks.embedding_service, "similarity", return_value=0.0):
+        asr = ptasks.run_indic("/tmp/clean.wav", "/tmp/org.wav", file_prior=None)
 
-    assert asr["indic"]["abstained"] is True
-    assert asr["indic"]["text"] == ""          # never masquerades as whisper
-    assert asr["whisper"]["text"] == "annyeong"
+    assert asr["abstained"] is True
+    assert asr["text"] == ""
+    assert asr["source"] == "none"
 
 
-def test_run_models_blanks_ghost_phrase():
+def test_run_indic_dualrun_agreement_high():
+    # enhanced and original decodes agree -> high confidence, not divergent.
     with patch.object(ptasks.lang_id_service, "identify",
-                      return_value={"top1": "eng", "top1_confidence": 0.2,
+                      return_value={"top1": "tel", "top1_confidence": 0.9,
+                                    "top2": None, "top2_confidence": 0.0}), \
+         patch.object(ptasks.lang_id_service, "to_iso639_1", return_value="te"), \
+         patch.object(ptasks.indic_asr_service, "transcribe_clip",
+                      return_value={"text": "ధర పదిహేను రూపాయలు", "confidence": None,
+                                    "language": "te", "model": "indic", "abstained": False}), \
+         patch.object(ptasks.embedding_service, "similarity", return_value=0.99):
+        asr = ptasks.run_indic("/tmp/clean.wav", "/tmp/org.wav", file_prior="te")
+
+    assert asr["text"] == "ధర పదిహేను రూపాయలు"
+    assert asr["agreement"] >= 0.9
+    assert asr["source"] == "indic_enhanced"
+
+
+def test_run_indic_blanks_ghost_phrase():
+    with patch.object(ptasks.lang_id_service, "identify",
+                      return_value={"top1": "eng", "top1_confidence": 0.9,
                                     "top2": None, "top2_confidence": 0.0}), \
          patch.object(ptasks.lang_id_service, "to_iso639_1", return_value="en"), \
-         patch.object(ptasks, "_whisper_clip",
-                      return_value={"text": "Thank you.", "confidence": 0.6,
-                                    "language": "en", "no_speech_prob": 0.2}), \
          patch.object(ptasks.indic_asr_service, "transcribe_clip",
                       return_value={"text": "Thank you.", "confidence": None, "language": "en",
-                                    "model": "x", "abstained": False}), \
-         patch.object(ptasks.seamless_service, "transcribe_clip",
-                      return_value={"text": "[Music playing]", "confidence": 0.3, "language": "en"}):
-        asr = ptasks.run_models("/tmp/clean.wav", file_prior=None)
+                                    "model": "indic", "abstained": False}), \
+         patch.object(ptasks.embedding_service, "similarity", return_value=0.0):
+        asr = ptasks.run_indic("/tmp/clean.wav", "/tmp/org.wav", file_prior="en")
 
-    assert asr["whisper"]["text"] == ""        # ghost blanked
-    assert asr["seamless"]["text"] == ""        # [Music playing] blanked
+    assert asr["text"] == ""                   # ghost blanked both runs
+    assert asr["hallucination"] == "ghost_phrase"
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="no ffmpeg")

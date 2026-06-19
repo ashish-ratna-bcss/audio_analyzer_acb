@@ -274,14 +274,18 @@ def _build_units(turns, vad_union, same_speaker_gap_s=0.5, min_dur_s=0.3):
     return units
 
 
-def run_models(clean_clip, *, file_prior):
-    """Three independent ASR models on one robustly-preprocessed clip.
+def run_indic(clean_clip, raw_clip, *, file_prior):
+    """Single ASR model — IndicConformer — run twice for self-validation.
 
     Language routing: trust clip MMS-LID above the gate (and within ALLOWED_LANGS
-    when set), else the file prior, else Whisper self-detect. Each pass is passed
-    through the hallucination filter. Models never substitute for one another:
-    IndicConformer abstains on unsupported languages instead of falling back to
-    Whisper, so the three passes stay genuinely independent.
+    when set), else the file prior. With no Whisper to self-detect, an unresolved
+    language falls back to the file prior; if that is also absent the segment
+    cannot be routed and IndicConformer abstains.
+
+    Validation (replaces 3-way cross-model): transcribe the enhanced clip AND the
+    original clip with IndicConformer; their agreement is the confidence. The
+    enhanced decode is primary (cleaner); the original guards against
+    over-suppression artifacts.
     """
     mms = lang_id_service.identify(clean_clip)
     clip_lang = lang_id_service.to_iso639_1(mms.get("top1"))
@@ -290,85 +294,79 @@ def run_models(clean_clip, *, file_prior):
     if clip_lang and clip_conf >= config.LID_VOTE_MIN_CONF and (
             not config.ALLOWED_LANGS or clip_lang in config.ALLOWED_LANGS):
         routing_lang = clip_lang
-    elif file_prior:
-        routing_lang = file_prior
     else:
-        routing_lang = None  # whisper auto
+        routing_lang = file_prior  # may be None -> indic abstains
 
-    # Whisper (independent; constrained only when we have a confident routing lang).
-    w = _whisper_clip(clean_clip, "transcribe", language=routing_lang or "auto")
-    whisper_lang = w.get("language") or "und"
-    if routing_lang is None:
-        routing_lang = whisper_lang
-    w = hallucination_filter.filter_pass(w, no_speech_prob=w.get("no_speech_prob"))
+    i_enh = hallucination_filter.filter_pass(
+        indic_asr_service.transcribe_clip(clean_clip, routing_lang))
+    i_org = hallucination_filter.filter_pass(
+        indic_asr_service.transcribe_clip(raw_clip, routing_lang))
 
-    # IndicConformer (abstains on unsupported lang; never whisper fallback).
-    i = indic_asr_service.transcribe_clip(clean_clip, routing_lang)
-    i = hallucination_filter.filter_pass(i)
+    enh_text = (i_enh.get("text") or "").strip()
+    org_text = (i_org.get("text") or "").strip()
+    text = enh_text or org_text          # enhanced primary, original fallback
+    source = "indic_enhanced" if enh_text else ("indic_original" if org_text else "none")
 
-    # SeamlessM4T (independent).
-    m = seamless_service.transcribe_clip(clean_clip, routing_lang)
-    m = hallucination_filter.filter_pass(m)
+    sc = cross_model.selfcheck_confidence(enh_text, org_text,
+                                          embed_fn=embedding_service.similarity)
+
+    abstained = bool(i_enh.get("abstained") and i_org.get("abstained"))
+    hallucination = i_enh.get("hallucination") or i_org.get("hallucination")
 
     return {"lang_id": {"mms_top1": mms.get("top1"),
                         "mms_top1_confidence": mms.get("top1_confidence"),
                         "mms_top2": mms.get("top2"),
                         "mms_top2_confidence": mms.get("top2_confidence"),
-                        "whisper_lang": whisper_lang, "routing_lang": routing_lang},
-            "whisper": w, "indic": i, "seamless": m}
+                        "routing_lang": routing_lang},
+            "text": text, "enh_text": enh_text, "org_text": org_text,
+            "confidence": sc["confidence"], "agreement": sc["agreement"],
+            "source": source, "abstained": abstained, "hallucination": hallucination,
+            "model": i_enh.get("model") or i_org.get("model", config.INDIC_CONFORMER_MODEL)}
 
 
 def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_raw,
                   diarization_meta, extra_flags):
-    """Build per-model candidates + cross-model consensus and persist one segment.
-    The DB row carries the consensus text/pass (drives review/certify); the full
-    per-model candidates are stored for the independent per-model transcripts.
+    """Persist one segment from the single-model IndicConformer result + self-check.
     Returns (segment_id, flagged, per_segment_entry)."""
-    w, i, m = asr["whisper"], asr["indic"], asr["seamless"]
     routing_lang = asr["lang_id"]["routing_lang"]
 
     candidates = {
         "lang_id": asr["lang_id"],
-        "pass1_whisper": {"text": w["text"], "confidence": w.get("confidence"),
-                          "language": asr["lang_id"]["whisper_lang"],
-                          "model": "openai/whisper-large-v3",
-                          "hallucination": w.get("hallucination")},
-        "pass2_indic_conformer": {"text": i["text"], "confidence": i.get("confidence"),
-                                  "language": routing_lang,
-                                  "model": i.get("model", config.INDIC_CONFORMER_MODEL),
-                                  "abstained": i.get("abstained", False),
-                                  "hallucination": i.get("hallucination")},
-        "pass3_seamless": {"text": m["text"], "confidence": m.get("confidence"),
-                           "language": routing_lang, "model": config.SEAMLESS_MODEL,
-                           "hallucination": m.get("hallucination")},
+        "indic_conformer": {
+            "text": asr["text"], "enh_text": asr["enh_text"], "org_text": asr["org_text"],
+            "confidence": asr["confidence"], "agreement": asr["agreement"],
+            "language": routing_lang, "model": asr["model"],
+            "source": asr["source"], "abstained": asr["abstained"],
+            "hallucination": asr["hallucination"]},
+        "agreement": asr["agreement"],
         "diarization": diarization_meta,
     }
-    texts = {"pass1_whisper": w["text"], "pass2_indic_conformer": i["text"],
-             "pass3_seamless": m["text"]}
-    confs = {"pass1_whisper": w.get("confidence"),
-             "pass2_indic_conformer": i.get("confidence"),
-             "pass3_seamless": m.get("confidence")}
-    verdict = cross_model.compare_passes(texts, confs, embed_fn=embedding_service.similarity,
-                                         agreement_min=config.AGREEMENT_MIN)
-    candidates["agreement"] = verdict["agreement"]
-    candidates["consensus_pass"] = verdict["consensus_pass"]
 
     reasons = []
-    if verdict["flagged"] and verdict.get("flag_reason"):
-        reasons.append(verdict["flag_reason"])
+    if asr["abstained"]:
+        reasons.append("non_indic_abstain")
+    elif not asr["text"]:
+        reasons.append("asr_empty")
+    else:
+        if asr["agreement"] < config.INDIC_SELFCHECK_MIN:
+            reasons.append("enh_orig_divergence")
+        if asr["confidence"] < config.INDIC_CONF_MIN:
+            reasons.append("low_confidence")
+    if asr["hallucination"]:
+        reasons.append(asr["hallucination"])
     reasons.extend(extra_flags or [])
     flagged = bool(reasons)
     flag_reason = "+".join(dict.fromkeys(reasons)) if reasons else None
 
     seg_id = repo.add_segment(
         session, file_id=job.file_id, start=start, end=end, speaker=speaker,
-        text=verdict["consensus_text"], confidence=verdict["confidence"],
-        source_pass=verdict["consensus_pass"] or "none", flagged=flagged,
+        text=asr["text"], confidence=asr["confidence"],
+        source_pass="indic_conformer", flagged=flagged,
         review_status="pending" if flagged else "auto_accepted",
         candidates=candidates, clip_original=clip_raw, clip_enhanced=clip_clean,
         detected_language=routing_lang)
     entry = {"segment_id": seg_id, "edit_distance_norm": None,
-             "embedding_similarity": verdict["agreement"], "avg_logprob": None,
+             "embedding_similarity": asr["agreement"], "avg_logprob": None,
              "flag_reason": flag_reason}
     return seg_id, flagged, entry
 
@@ -418,7 +416,7 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
                         _torch.cuda.empty_cache()
                     spk = (unit["speakers"][si] if si < len(unit["speakers"])
                            else f"overlap_spk{si}")
-                    asr = run_models(stem, file_prior=file_prior)
+                    asr = run_indic(stem, stem, file_prior=file_prior)
                     meta = {"speaker": spk,
                             "concurrent_speakers": [s for s in unit["speakers"] if s != spk],
                             "is_overlap": True, "segment_type": "overlap",
@@ -432,7 +430,7 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
                 continue
             # Separation failed -> fall through to mixed-clip transcription.
 
-        asr = run_models(clips["clean"], file_prior=file_prior)
+        asr = run_indic(clips["clean"], clips["raw"], file_prior=file_prior)
         extra = []
         if utype == "overlap":
             extra.append("overlapping_speech")
@@ -553,13 +551,16 @@ def run_pipeline(job_id: str) -> str:
             src_hash = repo.get_file(s, job.file_id).source_sha256
             data = ts.build(job.case_id, job.file_id, src_hash, segs,
                             status="machine_assisted_pending_certification")
-            ts.write(job.case_id, job.file_id, data)
-            # Independent per-model transcripts + cross-model validation report.
-            for pass_key, name in ts.PASS_FILE_NAMES.items():
-                ts.write_named(job.case_id, job.file_id, name,
-                               ts.build_per_model(job.file_id, segs, pass_key))
+            ts.write(job.case_id, job.file_id, data)            # certified_transcript.json
+            # IndicConformer transcript + single-model self-check validation report.
+            ts.write_named(job.case_id, job.file_id, "indic_transcript", data)
             ts.write_named(job.case_id, job.file_id, "validation_report",
-                           ts.build_validation_report(job.file_id, segs))
+                           ts.build_indic_validation(job.file_id, segs))
+            # Court-ready Time/Person/Conversation table (JSON + Markdown).
+            table = ts.build_conversation_table(job.file_id, segs)
+            ts.write_named(job.case_id, job.file_id, "conversation_table", table)
+            ts.write_named_text(job.case_id, job.file_id, "conversation_table", "md",
+                                ts.render_conversation_markdown(table))
             au.append_entry(job.case_id, file_id=job.file_id, stage="L8",
                             parameters={"segments": len(segs)}, session=s)
             s.commit()

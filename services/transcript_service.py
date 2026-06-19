@@ -81,6 +81,34 @@ def build_validation_report(file_id, segments) -> dict:
     return {"file_id": file_id, "segments": out, "summary": summary}
 
 
+def build_indic_validation(file_id, segments) -> dict:
+    """Single-model (IndicConformer) validation report: enhanced-vs-original
+    self-cross-check per segment + flag summary."""
+    out, flags = [], {}
+    for s in segments:
+        c = (s.candidates or {}).get("indic_conformer") or {}
+        h = c.get("hallucination")
+        if h:
+            flags[h] = flags.get(h, 0) + 1
+        out.append({
+            "segment_id": s.id, "start": s.start, "end": s.end, "speaker": s.speaker,
+            "language": s.detected_language,
+            "enh_text": c.get("enh_text", ""), "org_text": c.get("org_text", ""),
+            "text": c.get("text", ""), "agreement": c.get("agreement"),
+            "confidence": c.get("confidence"), "abstained": c.get("abstained"),
+            "hallucination": h, "flagged": bool(s.flagged),
+        })
+    agg = [o["agreement"] for o in out if isinstance(o["agreement"], (int, float))]
+    summary = {
+        "segments_total": len(out),
+        "segments_flagged": sum(1 for s in segments if s.flagged),
+        "mean_agreement": round(sum(agg) / len(agg), 3) if agg else 0.0,
+        "hallucination_flags": flags,
+    }
+    return {"file_id": file_id, "model": "indic_conformer",
+            "segments": out, "summary": summary}
+
+
 def _mmss(t: float) -> str:
     """Seconds -> MM.SS (floored), zero-padded, matching the court table style."""
     t = max(0.0, float(t))
@@ -120,4 +148,11 @@ def write_named(case_id, file_id, name, data) -> str:
     path = storage.derivative_path(case_id, file_id, "final", f"{file_id}_{name}.json")
     with open(path, "w") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    return path
+
+
+def write_named_text(case_id, file_id, name, ext, text) -> str:
+    path = storage.derivative_path(case_id, file_id, "final", f"{file_id}_{name}.{ext}")
+    with open(path, "w") as f:
+        f.write(text)
     return path
