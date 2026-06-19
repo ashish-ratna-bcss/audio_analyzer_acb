@@ -12,10 +12,13 @@ def load_pipeline():
             config.DIARIZATION_MODEL,
             use_auth_token=config.PYANNOTE_AUTH_TOKEN,
         )
-        # Run pyannote on CPU to avoid CUDA state conflicts with DeepFilterNet/Whisper
-        # cuDNN Conv layers in DF trigger CUDNN_STATUS_NOT_SUPPORTED warnings that
-        # corrupt CUDA context for subsequent pyannote .to("cuda") calls on A10G.
-        _pipeline.to(torch.device("cpu"))
+        if config.WHISPER_DEVICE == "cuda":
+            # Flush any pending CUDA ops from DeepFilterNet (L3) before pyannote
+            # initializes on GPU. cuDNN Conv plan failures in DF leave dirty state
+            # that causes illegal memory access when pyannote calls .to("cuda").
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+        _pipeline.to(torch.device(config.WHISPER_DEVICE))
     return _pipeline
 
 
