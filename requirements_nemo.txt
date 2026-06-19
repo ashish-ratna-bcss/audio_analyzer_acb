@@ -1,0 +1,4 @@
+# Optional NeMo requirements for Phase 2 Sortformer Diarization Pilot
+# Use a separate layer to avoid conflicts with the base pipeline
+nemo_toolkit[asr]==1.23.0
+pyannote.metrics

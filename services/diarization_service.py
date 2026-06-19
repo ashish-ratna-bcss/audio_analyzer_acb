@@ -70,7 +70,12 @@ def diarize(audio_path: str, num_speakers: int | None = 2) -> list[dict]:
 
 def diarize_with_overlap(audio_path: str, num_speakers: int | None = None) -> list[dict]:
     """pyannote 3.1 turns WITH overlapped speech retained — overlapping instants
-    yield multiple turns rather than being collapsed to one speaker."""
+    yield multiple turns rather than being collapsed to one speaker. Dispatches
+    to Sortformer if configured."""
+    if getattr(config, "DIARIZER", "pyannote") == "sortformer":
+        from services.sortformer_service import diarize_with_overlap as sortformer_diarize
+        return sortformer_diarize(audio_path, num_speakers)
+
     pipeline = load_pipeline()
     kwargs = {}
     if num_speakers is not None:
