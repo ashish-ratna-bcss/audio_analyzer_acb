@@ -288,13 +288,21 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
 
         spk = diarize_assign.assign_speakers(region, turns)
 
+        # Inject diarization metadata into candidates for full audit trail
+        candidates["diarization"] = {
+            "primary_speaker": spk["primary"],
+            "secondary_speakers": spk.get("secondary", []),
+            "overlap_detected": spk.get("overlap", False),
+            "overlap_seconds": spk.get("overlap_seconds", {}),
+        }
+
         # Default winner = pass1_whisper (Whisper large-v3 on enhanced audio).
         winning = p1["text"] or p2["text"] or p3["text"]
         source_pass = "pass1_whisper"
 
         seg_id = repo.add_segment(
             session, file_id=job.file_id, start=region["start"], end=region["end"],
-            speaker="+".join(spk["speakers"]), text=winning,
+            speaker=spk["primary"], text=winning,
             confidence=verdict["confidence"], source_pass=source_pass,
             flagged=verdict["flagged"],
             review_status="pending" if verdict["flagged"] else "auto_accepted",

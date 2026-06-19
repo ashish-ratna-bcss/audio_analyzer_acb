@@ -3,24 +3,37 @@ def _overlap(a_start, a_end, b_start, b_end) -> float:
 
 
 def assign_speakers(segment, turns, min_overlap: float = 0.1) -> dict:
-    """Overlap-aware: every diarization turn covering the segment by >= min_overlap
-    seconds contributes its speaker. Never drops a segment — with no overlap it
-    falls back to the nearest turn's speaker."""
+    """
+    Assign dominant speaker to segment by total overlap duration.
+    Returns primary speaker (most speech time in segment) + secondary list.
+    Falls back to nearest turn if no overlap found.
+    """
     s, e = segment["start"], segment["end"]
-    hits = []
+
+    # Accumulate total overlap per speaker
+    overlap_by_spk: dict[str, float] = {}
     for t in turns:
         ov = _overlap(s, e, t["start"], t["end"])
         if ov >= min_overlap:
-            hits.append((ov, t["speaker"]))
-    if hits:
-        speakers, seen = [], set()
-        for _, spk in sorted(hits, key=lambda x: -x[0]):
-            if spk not in seen:
-                seen.add(spk); speakers.append(spk)
-        speakers.sort()
-        return {"speakers": speakers, "overlap": len(speakers) > 1}
+            overlap_by_spk[t["speaker"]] = overlap_by_spk.get(t["speaker"], 0.0) + ov
 
+    if overlap_by_spk:
+        # Primary = speaker with most total overlap time
+        ranked = sorted(overlap_by_spk.items(), key=lambda x: -x[1])
+        primary = ranked[0][0]
+        secondary = [spk for spk, _ in ranked[1:]]
+        return {
+            "speakers": [primary],
+            "primary": primary,
+            "secondary": secondary,
+            "overlap": len(ranked) > 1,
+            "overlap_seconds": {spk: round(sec, 3) for spk, sec in ranked},
+        }
+
+    # No overlap — fall back to nearest turn
     if not turns:
-        return {"speakers": ["Speaker_1"], "overlap": False}
+        return {"speakers": ["Speaker_1"], "primary": "Speaker_1",
+                "secondary": [], "overlap": False, "overlap_seconds": {}}
     nearest = min(turns, key=lambda t: min(abs(s - t["start"]), abs(e - t["end"])))
-    return {"speakers": [nearest["speaker"]], "overlap": False}
+    return {"speakers": [nearest["speaker"]], "primary": nearest["speaker"],
+            "secondary": [], "overlap": False, "overlap_seconds": {}}

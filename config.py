@@ -55,7 +55,7 @@ TARGET_CHANNELS = 1
 # silence -> Whisper echoes the initial prompt). So VAD is disabled when the
 # converted audio's mean loudness falls below this dBFS floor; otherwise VAD
 # runs at minimum aggressiveness, trimming only long real silence.
-VAD_MIN_MEAN_DB = -38.0          # mean dBFS below this = low volume, VAD off
+VAD_MIN_MEAN_DB = -55.0          # mean dBFS below this = low volume, VAD off (lowered to catch quiet audio)
 VAD_MIN_SILENCE_MS = 2000        # only cut 2s+ silence (forensic: keep more audio)
 VAD_SPEECH_PAD_MS = 600          # wider padding so speech edges not clipped
 
@@ -87,10 +87,14 @@ GPU_QUEUE = "gpu_queue"
 CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "false").lower() == "true"
 
 # --- Phase 3: recall branches (enhancement / VAD union / separation) ---
-VAD_THRESHOLD = 0.25
-VAD_MIN_SPEECH_MS = 100
-VAD_SPEECH_PAD_MS_L3 = 300
-VAD_MIN_SILENCE_MS_L3 = 100
+# Silero VAD sensitivity for L3 segment detection.
+# Threshold 0.10: Silero is a phoneme-aware neural model so it still filters
+# environmental noise at this level while catching low-volume conversational speech.
+# Raise if too many noise-only segments appear; lower to recover more quiet speech.
+VAD_THRESHOLD = 0.10
+VAD_MIN_SPEECH_MS = 50           # catch short utterances / word fragments
+VAD_SPEECH_PAD_MS_L3 = 500      # wider pad so speech edges aren't clipped
+VAD_MIN_SILENCE_MS_L3 = 200     # merge segments within 200ms (avoids word-level fragmentation)
 DFN_MODEL = "DeepFilterNet3"          # DeepFilterNet3 enhancement
 DEMUCS_MODEL = "htdemucs_ft"          # HTDemucs separation checkpoint
 
