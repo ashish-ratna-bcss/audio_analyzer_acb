@@ -57,9 +57,11 @@ def transcribe_clip(wav_path: str, lang_code: str) -> dict:
                 wav = torchaudio.transforms.Resample(sr, 16000)(wav)
             if config.WHISPER_DEVICE == "cuda":
                 wav = wav.to("cuda")
-            # Use CTC decode — standard PyTorch argmax, no custom warp-RNNT CUDA kernels.
-            # RNNT mode uses custom warp-RNNT ops that fail JIT-compile under torch 2.3 + CUDA 12.1.
-            result = model(wav, lang_code, "ctc")
+            # Disable nvFuser for this call — it generates invalid CUDA C++ (nvrtc template
+            # errors) for conformer layers under torch 2.3 + CUDA 12.1. "none" forces eager
+            # mode without any kernel fusion; functionally identical, runs on GPU.
+            with torch.jit.fuser("none"):
+                result = model(wav, lang_code, "ctc")
             if isinstance(result, (list, tuple)):
                 text = result[0] if result else ""
             else:
