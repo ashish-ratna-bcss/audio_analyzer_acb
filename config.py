@@ -168,3 +168,12 @@ GHOST_PHRASES = [
     "[music]", "[music playing]", "[applause]", "(music)",
     "ご視聴ありがとうございました", "Продолжение следует...",
 ] + [p.strip() for p in os.getenv("GHOST_PHRASES_EXTRA", "").split(",") if p.strip()]
+
+# --- Phase: IndicConformer-only ASR (single model + self-cross-check) ---
+
+# Enhanced-vs-original self-cross-check: below this agreement the two IndicConformer
+# runs disagree (enhancement changed the words) -> flag enh_orig_divergence.
+INDIC_SELFCHECK_MIN = float(os.getenv("INDIC_SELFCHECK_MIN", "0.6"))
+
+# Final confidence below this flags the segment for human review.
+INDIC_CONF_MIN = float(os.getenv("INDIC_CONF_MIN", "0.5"))
