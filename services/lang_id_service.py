@@ -39,6 +39,29 @@ def to_iso639_1(mms_code: str | None) -> str | None:
     return _MMS_TO_ISO1.get(mms_code.lower())
 
 
+def vote_file_language(per_clip_lids, *, allowed_langs, min_conf):
+    """Majority-vote a file-level language prior (ISO 639-1) from per-clip MMS-LID.
+
+    Only clips with top1_confidence >= min_conf count. If allowed_langs is
+    non-empty, only languages in it are eligible. Returns None if no eligible vote.
+    """
+    from collections import Counter
+
+    counts = Counter()
+    for lid in per_clip_lids:
+        if (lid.get("top1_confidence") or 0.0) < min_conf:
+            continue
+        iso1 = to_iso639_1(lid.get("top1"))
+        if not iso1:
+            continue
+        if allowed_langs and iso1 not in allowed_langs:
+            continue
+        counts[iso1] += 1
+    if not counts:
+        return None
+    return counts.most_common(1)[0][0]
+
+
 def _load():
     global _processor, _model
     if _model is None:
