@@ -30,7 +30,7 @@ _NO_STUB_MODULES = {
     "test_cross_model", "test_diarize_assign", "test_vad_union",
     "test_recall_wrappers_import", "test_phase4_wrappers_import",
     "test_indic_abstain", "test_hallucination_filter", "test_lang_vote",
-    "test_preprocess_service", "test_transcript_outputs",
+    "test_preprocess_service", "test_transcript_outputs", "test_sortformer_service",
 }
 
 

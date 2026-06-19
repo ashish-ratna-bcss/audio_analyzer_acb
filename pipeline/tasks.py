@@ -13,9 +13,8 @@ from services import manifest_service as man
 from services import vad_service, enhancement_service, separation_service
 from services import vad_union
 from services import preprocess_service, hallucination_filter
-from services import (diarization_service, whisper_service, indic_asr_service,
-                      seamless_service, embedding_service, clip_service,
-                      lang_id_service)
+from services import (diarization_service, indic_asr_service,
+                      embedding_service, clip_service, lang_id_service)
 from services import cross_model
 from services import transcript_service as ts
 from services.hashing import sha256_file
@@ -148,18 +147,6 @@ def _l3_vad_union(job, in16, enhanced, stem, session):
                                 "union_count": len(union)}, session=session)
     session.commit()
     return union
-
-
-def _whisper_clip(clip_path, task, language="auto"):
-    res = whisper_service.transcribe(clip_path, language=language, use_vad=False, task=task)
-    segs = res["segments"]
-    if not segs:
-        return {"text": "", "confidence": 0.0, "language": res.get("language", "und"),
-                "no_speech_prob": 1.0}
-    nsp = sum(s.get("no_speech_prob", 0.0) for s in segs) / len(segs)
-    return {"text": " ".join(s["text"] for s in segs).strip(),
-            "confidence": round(sum(s["confidence"] for s in segs) / len(segs), 3),
-            "language": res.get("language", "und"), "no_speech_prob": round(nsp, 3)}
 
 
 def _l4_diarize(job, in48, session):

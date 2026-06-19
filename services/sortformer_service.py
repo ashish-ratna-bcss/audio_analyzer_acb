@@ -1,7 +1,15 @@
-import os
-import json
+"""NVIDIA Sortformer end-to-end diarization (pilot, behind config.DIARIZER).
+
+Sortformer is a single end-to-end neural diarizer (no separate VAD + speaker
+embedding + clustering cascade). It emits per-speaker segments that may overlap
+in time, which is exactly what `diarize_with_overlap` must return so the L5
+active-speaker partition can mark cross-talk units.
+
+Loaded only when config.DIARIZER == "sortformer"; NeMo is an optional heavy
+dependency and is not imported at module load.
+"""
 import logging
-import tempfile
+import re
 from typing import List, Dict, Any
 
 import config
@@ -10,120 +18,76 @@ logger = logging.getLogger(__name__)
 
 _model = None
 
+
 def get_model():
     global _model
     if _model is None:
-        try:
-            from nemo.collections.asr.models import SortformerEncLabelModel
-            logger.info("Loading Sortformer model...")
-            _model = SortformerEncLabelModel.from_pretrained(model_name="nvidia/diar_sortformer_4spk-v1")
-            if getattr(config, "_HAS_CUDA", False):
-                _model = _model.cuda()
-            _model.eval()
-            logger.info("Sortformer loaded.")
-        except ImportError:
-            logger.error("NeMo not installed. Cannot use sortformer.")
-            raise
+        from nemo.collections.asr.models import SortformerEncLabelModel
+        logger.info("Loading Sortformer (nvidia/diar_sortformer_4spk-v1)…")
+        _model = SortformerEncLabelModel.from_pretrained(
+            model_name="nvidia/diar_sortformer_4spk-v1")
+        if getattr(config, "_HAS_CUDA", False):
+            _model = _model.cuda()
+        _model.eval()
+        logger.info("Sortformer loaded.")
     return _model
 
-def diarize_with_overlap(audio_path: str, num_speakers: int | None = None) -> List[Dict[str, Any]]:
+
+def _parse_segment(entry) -> tuple | None:
+    """Normalize one Sortformer prediction into (start, end, speaker_label).
+
+    NeMo's Sortformer.diarize() returns, per audio file, a list of predictions.
+    Each prediction is either a string "start end speaker" (e.g. "0.23 5.67
+    speaker_0") or a sequence/tuple of those three fields. Be liberal about both.
     """
-    Run Sortformer diarization on a single file.
+    if isinstance(entry, str):
+        parts = entry.split()
+    elif isinstance(entry, (list, tuple)):
+        parts = [str(p) for p in entry]
+    else:
+        return None
+    if len(parts) < 3:
+        return None
+    try:
+        start = float(parts[0])
+        end = float(parts[1])
+    except ValueError:
+        return None
+    speaker = "_".join(parts[2:]).strip()
+    return start, end, speaker
+
+
+def diarize_with_overlap(audio_path: str, num_speakers: int | None = None) -> List[Dict[str, Any]]:
+    """Run Sortformer on one file. Returns overlap-preserving turns:
+    [{start, end, speaker: "Speaker_N"}], sorted by start.
     """
     model = get_model()
-    
-    # Sortformer typically uses a manifest and outputs to a directory
-    out_dir = tempfile.mkdtemp(prefix="sortformer_")
-    manifest_path = os.path.join(out_dir, "manifest.json")
-    
-    with open(manifest_path, "w") as f:
-        manifest_data = {
-            "audio_filepath": audio_path,
-            "offset": 0,
-            "duration": None,
-            "label": "infer",
-            "text": "-",
-            "num_speakers": num_speakers if num_speakers else None
-        }
-        json.dump(manifest_data, f)
-        f.write("\n")
-        
-    logger.info("Running Sortformer inference on %s", audio_path)
-    
-    # Typically in NeMo, inference with Sortformer model can be done using the model's transcribe method
-    # or by running it over a dataloader. Since we have a single file:
-    from nemo.collections.asr.parts.utils.diarization_utils import OfflineDiarWithASR
-    from omegaconf import OmegaConf
-    
-    cfg = OmegaConf.create({
-        "diarizer": {
-            "manifest_filepath": manifest_path,
-            "out_dir": out_dir,
-            "oracle_vad": False,
-            "collar": 0.25,
-            "ignore_overlap": False,
-            "vad": {
-                "model_path": "vad_multilingual_marblenet",
-                "parameters": {
-                    "onset": 0.1,
-                    "offset": 0.1,
-                    "pad_onset": 0,
-                    "pad_offset": 0
-                }
-            },
-            "speaker_embeddings": {
-                "model_path": "titanet_large",
-                "parameters": {
-                    "window_length_in_sec": 1.5,
-                    "shift_length_in_sec": 0.75,
-                    "multiscale_weights": [1, 1, 1],
-                    "save_embeddings": False
-                }
-            },
-            "clustering": {
-                "parameters": {
-                    "oracle_num_speakers": bool(num_speakers),
-                    "max_num_speakers": 8
-                }
-            }
-        }
-    })
-    
-    try:
-        from nemo.collections.asr.models import ClusteringDiarizer
-        diarizer = ClusteringDiarizer(cfg=cfg)
-        diarizer.diarize()
-    except Exception as e:
-        logger.warning(f"Clustering diarizer failed, falling back to basic sortformer transcribe: {e}")
-        # Basic transcribe fallback
-        pass
-    
-    # Read RTTM from out_dir
-    rttm_path = os.path.join(out_dir, "pred_rttms", os.path.basename(audio_path).rsplit('.', 1)[0] + ".rttm")
-    
-    segments = []
-    speaker_map = {}
+    logger.info("Sortformer inference on %s", audio_path)
+
+    # NeMo 2.x: diarize() returns a list (one item per input audio) of predicted
+    # speaker-active segments. Overlapping speakers yield separate, time-overlapping
+    # entries — retained as distinct turns (do NOT collapse).
+    preds = model.diarize(audio=[audio_path], batch_size=1, include_tensor_outputs=False)
+
+    # preds is a list per file; take the first (single file in).
+    file_preds = preds[0] if preds else []
+
+    speaker_map: dict[str, str] = {}
     counter = 1
-    
-    if os.path.exists(rttm_path):
-        with open(rttm_path, "r") as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) >= 8 and parts[0] == "SPEAKER":
-                    start = float(parts[3])
-                    duration = float(parts[4])
-                    speaker_label = parts[7]
-                    
-                    if speaker_label not in speaker_map:
-                        speaker_map[speaker_label] = f"Speaker_{counter}"
-                        counter += 1
-                        
-                    segments.append({
-                        "start": round(start, 3),
-                        "end": round(start + duration, 3),
-                        "speaker": speaker_map[speaker_label]
-                    })
-    else:
-        logger.warning(f"No RTTM file generated by Sortformer at {rttm_path}")
-        
+    segments: list[dict] = []
+    for entry in file_preds:
+        parsed = _parse_segment(entry)
+        if parsed is None:
+            continue
+        start, end, raw_spk = parsed
+        if end <= start:
+            continue
+        if raw_spk not in speaker_map:
+            speaker_map[raw_spk] = f"Speaker_{counter}"
+            counter += 1
+        segments.append({"start": round(start, 3), "end": round(end, 3),
+                         "speaker": speaker_map[raw_spk]})
+
+    if not segments:
+        logger.warning("Sortformer produced no segments for %s", audio_path)
     return sorted(segments, key=lambda x: x["start"])
