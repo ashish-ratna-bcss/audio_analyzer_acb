@@ -111,3 +111,32 @@ INDIC_CONFORMER_MODEL = os.getenv("INDIC_CONFORMER_MODEL", "ai4bharat/indic-conf
 SEAMLESS_MODEL = os.getenv("SEAMLESS_MODEL", "facebook/seamless-m4t-v2-large")
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/LaBSE")
+
+# --- Phase: intelligent segmentation + overlap separation (accuracy-first) ---
+
+# Gap recovery: VAD-confirmed speech with NO diarization turn is windowed and
+# transcribed as Speaker_unknown. Recovers regions pyannote drops as non-speech
+# (loud cross-talk, far-field, music-masked speech) and low-volume conversation.
+# Nothing inside the VAD union ever goes untranscribed.
+GAP_RECOVERY_ENABLED = os.getenv("GAP_RECOVERY_ENABLED", "true").lower() == "true"
+GAP_WINDOW_S = float(os.getenv("GAP_WINDOW_S", "20.0"))   # split long gaps into windows
+GAP_MIN_DUR_S = float(os.getenv("GAP_MIN_DUR_S", "1.0"))  # ignore micro-gaps
+
+# pyannote 3.1 sensitivity. min_duration_off=0 stops the pipeline bridging over
+# short pauses into one block, yielding finer/quieter speaker turns.
+DIARIZATION_MIN_DURATION_OFF = float(os.getenv("DIARIZATION_MIN_DURATION_OFF", "0.0"))
+
+# Overlap separation: SpeechBrain SepFormer splits cross-talk windows into
+# per-speaker streams; each stream is transcribed independently by all 3 ASR
+# passes so both/all overlapped voices are recovered (not just the loudest).
+OVERLAP_SEPARATION_ENABLED = os.getenv("OVERLAP_SEPARATION_ENABLED", "true").lower() == "true"
+SEPFORMER_MODEL = os.getenv("SEPFORMER_MODEL", "speechbrain/sepformer-wsj02mix")
+OVERLAP_MIN_DUR_S = float(os.getenv("OVERLAP_MIN_DUR_S", "0.5"))
+
+# Per-clip dynamic loudness normalization before ASR — boosts quiet speech so
+# Whisper/IndicConformer/Seamless decode it instead of treating it as silence.
+CLIP_NORMALIZE = os.getenv("CLIP_NORMALIZE", "true").lower() == "true"
+
+# Below this MMS-LID top-1 confidence, ignore its routing and fall back to
+# Whisper auto-detect (low-conf LID misfires poison all 3 ASR passes).
+MMS_LID_MIN_CONFIDENCE = float(os.getenv("MMS_LID_MIN_CONFIDENCE", "0.5"))

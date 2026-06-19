@@ -204,59 +204,188 @@ def _l4_diarize(job, in48, session):
     return turns
 
 
-def _build_turn_segments(turns, vad_union,
-                          same_speaker_gap_s=0.5,
-                          min_dur_s=0.3,
-                          vad_min_overlap_s=0.1):
-    """
-    Convert diarization turns into transcription units.
-
-    - Merge adjacent same-speaker turns separated by <= same_speaker_gap_s.
-    - Drop turns shorter than min_dur_s.
-    - Validate each turn has VAD-confirmed speech (vad_min_overlap_s).
-    - Overlapping turns from DIFFERENT speakers are preserved separately so
-      both voices get independently transcribed (each model will pick up the
-      dominant voice in that window — true source-separated transcription
-      requires a future per-turn Demucs pass).
-    """
+def _partition_by_active_speakers(turns):
+    """Partition the timeline into maximal intervals of constant active-speaker
+    set, using a sweep over all turn boundaries. |set|==1 -> single speaker;
+    |set|>=2 -> overlapped cross-talk. Adjacent equal-set intervals are merged."""
     if not turns:
         return []
-
-    sorted_turns = sorted(turns, key=lambda t: t["start"])
-    merged = [dict(sorted_turns[0])]
-    for t in sorted_turns[1:]:
-        last = merged[-1]
-        gap = t["start"] - last["end"]
-        if (t["speaker"] == last["speaker"]
-                and 0 <= gap <= same_speaker_gap_s):
-            last["end"] = max(last["end"], t["end"])
-        else:
-            merged.append(dict(t))
-
-    result = []
-    for m in merged:
-        if m["end"] - m["start"] < min_dur_s:
+    bounds = sorted({t["start"] for t in turns} | {t["end"] for t in turns})
+    out = []
+    for a, b in zip(bounds, bounds[1:]):
+        if b - a <= 1e-4:
             continue
-        has_vad = any(
-            max(0.0, min(m["end"], v["end"]) - max(m["start"], v["start"]))
-            >= vad_min_overlap_s
-            for v in vad_union
-        )
-        if has_vad:
-            result.append(m)
+        mid = (a + b) / 2.0
+        active = sorted({t["speaker"] for t in turns
+                         if t["start"] <= mid < t["end"]})
+        if active:
+            out.append({"start": a, "end": b, "speakers": active})
+    merged = []
+    for iv in out:
+        if (merged and merged[-1]["speakers"] == iv["speakers"]
+                and iv["start"] - merged[-1]["end"] <= 1e-3):
+            merged[-1]["end"] = iv["end"]
+        else:
+            merged.append(dict(iv))
+    return merged
+
+
+def _subtract_interval(s, e, covered):
+    """Sub-intervals of [s,e] not covered by the sorted (start,end) list."""
+    result, cur = [], s
+    for cs, ce in covered:
+        if ce <= cur:
+            continue
+        if cs >= e:
+            break
+        if cs > cur:
+            result.append((cur, min(cs, e)))
+        cur = max(cur, ce)
+        if cur >= e:
+            break
+    if cur < e:
+        result.append((cur, e))
     return result
 
 
-def _overlapping_speakers(unit, all_units):
-    """Return speakers whose turns overlap with this unit (excluding self)."""
-    s, e = unit["start"], unit["end"]
-    others = set()
-    for u in all_units:
-        if u is unit:
+def _coalesce_speaker_units(units, same_speaker_gap_s):
+    """Merge consecutive single-speaker units of the same speaker across small
+    gaps, reducing fragmentation from the active-speaker partition."""
+    out = []
+    for u in units:
+        if (out and u["type"] == "speaker" and out[-1]["type"] == "speaker"
+                and out[-1]["speaker"] == u["speaker"]
+                and u["start"] - out[-1]["end"] <= same_speaker_gap_s):
+            out[-1]["end"] = u["end"]
+        else:
+            out.append(dict(u))
+    return out
+
+
+def _build_units(turns, vad_union, same_speaker_gap_s=0.5, min_dur_s=0.3):
+    """Typed transcription units covering ALL detected speech:
+      - 'speaker': exactly one active speaker
+      - 'overlap': two+ active speakers (cross-talk) -> SepFormer separation
+      - 'gap'    : VAD speech with no diarization turn -> Speaker_unknown
+    Gap recovery guarantees nothing inside the VAD union goes untranscribed."""
+    units = []
+    for iv in _partition_by_active_speakers(turns):
+        if iv["end"] - iv["start"] < min_dur_s:
             continue
-        if u["speaker"] != unit["speaker"] and u["start"] < e and u["end"] > s:
-            others.add(u["speaker"])
-    return sorted(others)
+        units.append({
+            "start": iv["start"], "end": iv["end"],
+            "speaker": iv["speakers"][0], "speakers": iv["speakers"],
+            "type": "overlap" if len(iv["speakers"]) > 1 else "speaker",
+        })
+    units = _coalesce_speaker_units(sorted(units, key=lambda u: u["start"]),
+                                    same_speaker_gap_s)
+
+    if config.GAP_RECOVERY_ENABLED:
+        covered = sorted((u["start"], u["end"]) for u in units)
+        for v in vad_union:
+            for gs, ge in _subtract_interval(v["start"], v["end"], covered):
+                if ge - gs < config.GAP_MIN_DUR_S:
+                    continue
+                t = gs
+                while t < ge - 1e-6:
+                    we = min(t + config.GAP_WINDOW_S, ge)
+                    if we - t >= config.GAP_MIN_DUR_S:
+                        units.append({
+                            "start": round(t, 3), "end": round(we, 3),
+                            "speaker": "Speaker_unknown",
+                            "speakers": ["Speaker_unknown"], "type": "gap"})
+                    t = we
+
+    units.sort(key=lambda u: u["start"])
+    return units
+
+
+def _three_pass_asr(clip_enh, clip_org):
+    """MMS-LID + 3 independent ASR passes on a prepared clip pair. clip_org may
+    equal clip_enh (separated-speaker streams have no distinct original source)."""
+    mms = lang_id_service.identify(clip_enh)
+    mms_top1 = mms.get("top1")
+    mms_top1_conf = mms.get("top1_confidence") or 0.0
+    routing_lang_2 = lang_id_service.to_iso639_1(mms_top1)
+
+    p1 = _clean_pass(_whisper_clip(clip_enh, "transcribe"))
+    whisper_lang = p1.get("language") or "und"
+
+    # Trust MMS-LID routing only above the confidence floor; else Whisper detect.
+    if routing_lang_2 and mms_top1_conf >= config.MMS_LID_MIN_CONFIDENCE:
+        routing_lang = routing_lang_2
+    else:
+        routing_lang = whisper_lang or "und"
+
+    lang_mismatch = bool(
+        routing_lang_2 and mms_top1_conf >= config.MMS_LID_MIN_CONFIDENCE
+        and whisper_lang != "und" and routing_lang_2 != whisper_lang)
+
+    p2 = _clean_pass(indic_asr_service.transcribe_clip(clip_enh, routing_lang))
+    p3 = _clean_pass(seamless_service.transcribe_clip(clip_org, routing_lang))
+
+    return {"mms": mms, "mms_top1": mms_top1, "whisper_lang": whisper_lang,
+            "routing_lang": routing_lang, "lang_mismatch": lang_mismatch,
+            "p1": p1, "p2": p2, "p3": p3}
+
+
+def _emit_segment(job, session, *, start, end, speaker, asr, clip_enh, clip_org,
+                  pass3_source, diarization_meta, extra_flags):
+    """Build candidates + cross-model verdict and persist one segment row.
+    Returns (segment_id, flagged, per_segment_entry)."""
+    p1, p2, p3 = asr["p1"], asr["p2"], asr["p3"]
+    whisper_lang, routing_lang, mms = asr["whisper_lang"], asr["routing_lang"], asr["mms"]
+
+    candidates = {
+        "lang_id": {
+            "mms_top1": asr["mms_top1"],
+            "mms_top1_confidence": mms.get("top1_confidence"),
+            "mms_top2": mms.get("top2"),
+            "mms_top2_confidence": mms.get("top2_confidence"),
+            "whisper_lang": whisper_lang,
+            "routing_lang": routing_lang,
+            "lang_mismatch": asr["lang_mismatch"],
+        },
+        "pass1_whisper": {"text": p1["text"], "confidence": p1["confidence"],
+                          "language": whisper_lang, "model": "openai/whisper-large-v3"},
+        "pass2_indic_conformer": {"text": p2["text"], "confidence": p2["confidence"],
+                                  "language": routing_lang,
+                                  "model": p2.get("model", config.INDIC_CONFORMER_MODEL)},
+        "pass3_seamless": {"text": p3["text"], "confidence": p3["confidence"],
+                           "language": routing_lang, "model": config.SEAMLESS_MODEL,
+                           "audio_source": pass3_source},
+        "diarization": diarization_meta,
+    }
+    texts = {"pass1_whisper": p1["text"], "pass2_indic_conformer": p2["text"],
+             "pass3_seamless": p3["text"]}
+    confs = {"pass1_whisper": p1["confidence"], "pass2_indic_conformer": p2["confidence"],
+             "pass3_seamless": p3["confidence"]}
+    sim = embedding_service.similarity(p1["text"], p2["text"])
+    verdict = cross_model.compare_passes(texts, confs, vad_positive=True,
+                                         embedding_sim=sim)
+
+    reasons = []
+    if verdict["flagged"] and verdict.get("flag_reason"):
+        reasons.append(verdict["flag_reason"])
+    if asr["lang_mismatch"]:
+        reasons.append("lang_id_mismatch")
+    reasons.extend(extra_flags or [])
+    flagged = bool(reasons)
+    flag_reason = "+".join(dict.fromkeys(reasons)) if reasons else verdict.get("flag_reason")
+
+    winning = p1["text"] or p2["text"] or p3["text"]
+    seg_id = repo.add_segment(
+        session, file_id=job.file_id, start=start, end=end,
+        speaker=speaker, text=winning,
+        confidence=verdict["confidence"], source_pass="pass1_whisper",
+        flagged=flagged,
+        review_status="pending" if flagged else "auto_accepted",
+        candidates=candidates, clip_original=clip_org, clip_enhanced=clip_enh,
+        detected_language=routing_lang)
+    entry = {"segment_id": seg_id, "edit_distance_norm": None,
+             "embedding_similarity": round(sim, 3), "avg_logprob": None,
+             "flag_reason": flag_reason}
+    return seg_id, flagged, entry
 
 
 def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
@@ -264,133 +393,70 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
         storage.derivative_path(job.case_id, job.file_id, "clips", "_"))
     per_segment, flagged_count = [], 0
     enh_source = enhanced16 or original16
+    norm = config.CLIP_NORMALIZE
 
-    # Use diarization turns (not VAD blobs) as segmentation units.
-    # Each turn = one clip = one speaker = one transcription row.
-    # Overlapping turns from different speakers generate separate clips,
-    # so both voices are independently transcribed.
-    seg_units = _build_turn_segments(turns, union)
+    # Hybrid segmentation: active-speaker partition (single + overlap units)
+    # plus gap recovery for VAD speech pyannote left unattributed.
+    units = _build_units(turns, union)
 
-    for idx, unit in enumerate(seg_units):
-        import torch as _torch
+    import torch as _torch
+
+    for idx, unit in enumerate(units):
         if _torch.cuda.is_available():
             _torch.cuda.empty_cache()
 
+        utype = unit["type"]
         speaker = unit["speaker"]
-        concurrent = _overlapping_speakers(unit, seg_units)
-
         clip_enh = os.path.join(workdir, f"seg_{idx:04d}_{speaker}_enh.wav")
         clip_org = os.path.join(workdir, f"seg_{idx:04d}_{speaker}_org.wav")
-        clip_service.cut(enh_source, unit["start"], unit["end"], clip_enh)
-        clip_service.cut(original16, unit["start"], unit["end"], clip_org)
+        clip_service.cut(enh_source, unit["start"], unit["end"], clip_enh, normalize=norm)
+        clip_service.cut(original16, unit["start"], unit["end"], clip_org, normalize=norm)
 
-        # Independent language ID via MMS-LID (audio-grounded, not decoder-dependent).
-        mms = lang_id_service.identify(clip_enh)
-        mms_top1 = mms.get("top1")
-        mms_top1_conf = mms.get("top1_confidence") or 0.0
-        routing_lang_2 = lang_id_service.to_iso639_1(mms_top1)
+        # Cross-talk: split into per-speaker streams, transcribe each one so
+        # every overlapped voice is recovered (not just the loudest).
+        if (utype == "overlap" and config.OVERLAP_SEPARATION_ENABLED
+                and (unit["end"] - unit["start"]) >= config.OVERLAP_MIN_DUR_S):
+            stems = separation_service.separate_speakers(
+                clip_enh, workdir, f"seg_{idx:04d}")
+            if stems:
+                for si, stem in enumerate(stems):
+                    if _torch.cuda.is_available():
+                        _torch.cuda.empty_cache()
+                    spk = (unit["speakers"][si] if si < len(unit["speakers"])
+                           else f"overlap_spk{si}")
+                    asr = _three_pass_asr(stem, stem)
+                    meta = {"speaker": spk,
+                            "concurrent_speakers": [s for s in unit["speakers"] if s != spk],
+                            "is_overlap": True, "segment_type": "overlap",
+                            "separation": "sepformer", "stem_index": si}
+                    _, flagged, entry = _emit_segment(
+                        job, session, start=unit["start"], end=unit["end"],
+                        speaker=spk, asr=asr, clip_enh=stem, clip_org=stem,
+                        pass3_source="separated_stem", diarization_meta=meta,
+                        extra_flags=["overlapping_speech"])
+                    flagged_count += 1 if flagged else 0
+                    per_segment.append(entry)
+                continue
+            # Separation failed -> fall through to mixed-clip transcription.
 
-        # Pass 1: Whisper large-v3, enhanced audio, auto language detect.
-        p1 = _clean_pass(_whisper_clip(clip_enh, "transcribe"))
-        whisper_lang = p1.get("language") or "und"
-
-        # Only trust MMS-LID routing when confidence >= 0.5.
-        # Low-confidence detections (Breton, Faroese, Tibetan on Telugu audio)
-        # poison all 3 ASR passes. Fall back to Whisper auto-detect instead.
-        if routing_lang_2 and mms_top1_conf >= 0.5:
-            routing_lang = routing_lang_2
-        else:
-            routing_lang = whisper_lang or "und"
-
-        lang_mismatch = bool(
-            routing_lang_2 and mms_top1_conf >= 0.5
-            and whisper_lang != "und"
-            and routing_lang_2 != whisper_lang
-        )
-
-        # Pass 2: IndicConformer-600M, language-routed by MMS-LID.
-        p2 = _clean_pass(indic_asr_service.transcribe_clip(clip_enh, routing_lang))
-
-        # Pass 3: SeamlessM4T v2 on ORIGINAL audio, language-routed by MMS-LID.
-        p3 = _clean_pass(seamless_service.transcribe_clip(clip_org, routing_lang))
-
-        detected_lang = routing_lang
-
-        candidates = {
-            "lang_id": {
-                "mms_top1": mms_top1,
-                "mms_top1_confidence": mms.get("top1_confidence"),
-                "mms_top2": mms.get("top2"),
-                "mms_top2_confidence": mms.get("top2_confidence"),
-                "whisper_lang": whisper_lang,
-                "routing_lang": routing_lang,
-                "lang_mismatch": lang_mismatch,
-            },
-            "pass1_whisper": {
-                "text": p1["text"], "confidence": p1["confidence"], "language": whisper_lang,
-                "model": "openai/whisper-large-v3",
-            },
-            "pass2_indic_conformer": {
-                "text": p2["text"], "confidence": p2["confidence"], "language": routing_lang,
-                "model": p2.get("model", config.INDIC_CONFORMER_MODEL),
-            },
-            "pass3_seamless": {
-                "text": p3["text"], "confidence": p3["confidence"], "language": routing_lang,
-                "model": config.SEAMLESS_MODEL, "audio_source": "original",
-            },
-            "diarization": {
-                "speaker": speaker,
-                "concurrent_speakers": concurrent,
-                "is_overlap": bool(concurrent),
-            },
-        }
-        texts = {
-            "pass1_whisper": p1["text"],
-            "pass2_indic_conformer": p2["text"],
-            "pass3_seamless": p3["text"],
-        }
-        confs = {
-            "pass1_whisper": p1["confidence"],
-            "pass2_indic_conformer": p2["confidence"],
-            "pass3_seamless": p3["confidence"],
-        }
-
-        sim = embedding_service.similarity(p1["text"], p2["text"])
-        verdict = cross_model.compare_passes(texts, confs, vad_positive=True,
-                                             embedding_sim=sim)
-
-        if lang_mismatch and not verdict["flagged"]:
-            verdict = {**verdict, "flagged": True, "flag_reason": "lang_id_mismatch"}
-        elif lang_mismatch and verdict["flagged"]:
-            verdict = {**verdict, "flag_reason": verdict["flag_reason"] + "+lang_id_mismatch"}
-
-        # Flag overlapping-speech segments for human review.
-        if concurrent and not verdict["flagged"]:
-            verdict = {**verdict, "flagged": True, "flag_reason": "overlapping_speech"}
-        elif concurrent and verdict["flagged"]:
-            verdict = {**verdict, "flag_reason": verdict["flag_reason"] + "+overlapping_speech"}
-
-        winning = p1["text"] or p2["text"] or p3["text"]
-        source_pass = "pass1_whisper"
-
-        seg_id = repo.add_segment(
-            session, file_id=job.file_id, start=unit["start"], end=unit["end"],
-            speaker=speaker, text=winning,
-            confidence=verdict["confidence"], source_pass=source_pass,
-            flagged=verdict["flagged"],
-            review_status="pending" if verdict["flagged"] else "auto_accepted",
-            candidates=candidates, clip_original=clip_org, clip_enhanced=clip_enh,
-            detected_language=detected_lang)
-        if verdict["flagged"]:
-            flagged_count += 1
-        per_segment.append({
-            "segment_id": seg_id, "edit_distance_norm": None,
-            "embedding_similarity": round(sim, 3), "avg_logprob": None,
-            "flag_reason": verdict["flag_reason"]})
+        asr = _three_pass_asr(clip_enh, clip_org)
+        extra = []
+        if utype == "overlap":
+            extra.append("overlapping_speech")
+        if utype == "gap":
+            extra.append("gap_recovery")
+        meta = {"speaker": speaker,
+                "concurrent_speakers": [s for s in unit["speakers"] if s != speaker],
+                "is_overlap": utype == "overlap", "segment_type": utype}
+        _, flagged, entry = _emit_segment(
+            job, session, start=unit["start"], end=unit["end"],
+            speaker=speaker, asr=asr, clip_enh=clip_enh, clip_org=clip_org,
+            pass3_source="original", diarization_meta=meta, extra_flags=extra)
+        flagged_count += 1 if flagged else 0
+        per_segment.append(entry)
 
     session.commit()
-    # Sanity check: at least one segment produced
-    reconcile.check("L4:turns", len(seg_units), "L5:segments", len(per_segment))
+    reconcile.check("L4:units", len(units), "L5:segments", len(per_segment))
     return per_segment, flagged_count
 
 

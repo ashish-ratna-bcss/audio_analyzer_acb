@@ -1,8 +1,29 @@
+import logging
+
 from pyannote.audio import Pipeline
 import torch
 import config
 
+logger = logging.getLogger(__name__)
+
 _pipeline = None
+
+
+def _apply_sensitivity(pipeline):
+    """Re-instantiate pyannote with finer hyperparameters so quieter/shorter
+    speaker turns register instead of being merged into surrounding silence.
+    Guarded: if the param schema differs across versions, keep defaults."""
+    try:
+        current = pipeline.parameters(instantiated=True)
+        if isinstance(current, dict) and "segmentation" in current:
+            seg = dict(current.get("segmentation") or {})
+            seg["min_duration_off"] = config.DIARIZATION_MIN_DURATION_OFF
+            current = {**current, "segmentation": seg}
+            pipeline.instantiate(current)
+            logger.info("pyannote sensitivity applied: min_duration_off=%s",
+                        config.DIARIZATION_MIN_DURATION_OFF)
+    except Exception as exc:
+        logger.warning("pyannote sensitivity tuning skipped: %s", exc)
 
 
 def load_pipeline():
@@ -19,6 +40,7 @@ def load_pipeline():
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
         _pipeline.to(torch.device(config.WHISPER_DEVICE))
+        _apply_sensitivity(_pipeline)
     return _pipeline
 
 
