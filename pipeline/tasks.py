@@ -287,15 +287,24 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
         # Independent language ID via MMS-LID (audio-grounded, not decoder-dependent).
         mms = lang_id_service.identify(clip_enh)
         mms_top1 = mms.get("top1")
+        mms_top1_conf = mms.get("top1_confidence") or 0.0
         routing_lang_2 = lang_id_service.to_iso639_1(mms_top1)
 
         # Pass 1: Whisper large-v3, enhanced audio, auto language detect.
         p1 = _clean_pass(_whisper_clip(clip_enh, "transcribe"))
         whisper_lang = p1.get("language") or "und"
 
-        routing_lang = routing_lang_2 or whisper_lang
+        # Only trust MMS-LID routing when confidence >= 0.5.
+        # Low-confidence detections (Breton, Faroese, Tibetan on Telugu audio)
+        # poison all 3 ASR passes. Fall back to Whisper auto-detect instead.
+        if routing_lang_2 and mms_top1_conf >= 0.5:
+            routing_lang = routing_lang_2
+        else:
+            routing_lang = whisper_lang or "und"
+
         lang_mismatch = bool(
-            routing_lang_2 and whisper_lang != "und"
+            routing_lang_2 and mms_top1_conf >= 0.5
+            and whisper_lang != "und"
             and routing_lang_2 != whisper_lang
         )
 
