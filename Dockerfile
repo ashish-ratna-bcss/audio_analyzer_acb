@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip ffmpeg bash git \
+        python3 python3-pip python3-dev build-essential ffmpeg bash git \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
@@ -16,6 +16,9 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY requirements_nemo.txt .
+RUN pip3 install --no-cache-dir -r requirements_nemo.txt
 
 COPY . .
 

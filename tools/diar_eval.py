@@ -81,10 +81,11 @@ def evaluate_diarization(ref_segments: List[Dict], hyp_segments: List[Dict]):
     print(f"Hypothesis Speakers: {len(hyp_speakers)}")
     
     # Detailed components
-    components = der_metric.components(reference, hypothesis)
-    print(f"Missed Detection: {components.get('missed detection', 0)}")
-    print(f"False Alarm: {components.get('false alarm', 0)}")
-    print(f"Confusion: {components.get('confusion', 0)}")
+    der_detail = der_metric(reference, hypothesis, detailed=True)
+    if isinstance(der_detail, dict):
+        print(f"Missed Detection: {der_detail.get('missed detection', 0)}")
+        print(f"False Alarm: {der_detail.get('false alarm', 0)}")
+        print(f"Confusion: {der_detail.get('confusion', 0)}")
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate diarization performance against ground truth")
