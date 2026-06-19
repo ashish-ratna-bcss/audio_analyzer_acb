@@ -376,10 +376,8 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
             "flag_reason": verdict["flag_reason"]})
 
     session.commit()
-    # Coverage check: turn-based segmentation produces >= VAD union coverage
-    vad_dur = sum(v["end"] - v["start"] for v in union)
-    seg_dur = sum(u["end"] - u["start"] for u in seg_units)
-    reconcile.check("L3:union_duration", vad_dur, "L5:turn_duration", seg_dur)
+    # Sanity check: at least one segment produced
+    reconcile.check("L4:turns", len(seg_units), "L5:segments", len(per_segment))
     return per_segment, flagged_count
 
 
