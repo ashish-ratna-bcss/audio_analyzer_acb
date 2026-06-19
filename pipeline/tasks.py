@@ -12,6 +12,7 @@ from services import storage
 from services import manifest_service as man
 from services import vad_service, enhancement_service, separation_service
 from services import vad_union
+from services import preprocess_service, hallucination_filter
 from services import (diarization_service, whisper_service, indic_asr_service,
                       seamless_service, embedding_service, clip_service,
                       lang_id_service)
@@ -149,43 +150,16 @@ def _l3_vad_union(job, in16, enhanced, stem, session):
     return union
 
 
-def _whisper_clip(clip_path, task):
-    res = whisper_service.transcribe(clip_path, language="auto", use_vad=False, task=task)
+def _whisper_clip(clip_path, task, language="auto"):
+    res = whisper_service.transcribe(clip_path, language=language, use_vad=False, task=task)
     segs = res["segments"]
     if not segs:
-        return {"text": "", "confidence": 0.0, "language": res.get("language", "und")}
+        return {"text": "", "confidence": 0.0, "language": res.get("language", "und"),
+                "no_speech_prob": 1.0}
+    nsp = sum(s.get("no_speech_prob", 0.0) for s in segs) / len(segs)
     return {"text": " ".join(s["text"] for s in segs).strip(),
             "confidence": round(sum(s["confidence"] for s in segs) / len(segs), 3),
-            "language": res.get("language", "und")}
-
-
-def _has_repetition(text: str) -> bool:
-    """Detect degenerate hallucination loops: consecutive repeats or extreme lexical monotony."""
-    if not text:
-        return False
-    words = text.split()
-    if len(words) < 4:
-        return False
-    # 3+ consecutive identical tokens
-    for i in range(len(words) - 2):
-        if words[i] == words[i + 1] == words[i + 2]:
-            return True
-    # Unique ratio <30% with enough words → hallucination loop
-    if len(words) >= 8 and len(set(words)) / len(words) < 0.30:
-        return True
-    return False
-
-
-def _clean_pass(result: dict) -> dict:
-    """Blank pass output if repetition loop detected; zero confidence."""
-    if _has_repetition(result.get("text", "")):
-        return {
-            **result,
-            "text": "",
-            "confidence": 0.0,
-            "repetition_detected": True,
-        }
-    return result
+            "language": res.get("language", "und"), "no_speech_prob": round(nsp, 3)}
 
 
 def _l4_diarize(job, in48, session):
@@ -300,90 +274,101 @@ def _build_units(turns, vad_union, same_speaker_gap_s=0.5, min_dur_s=0.3):
     return units
 
 
-def _three_pass_asr(clip_enh, clip_org):
-    """MMS-LID + 3 independent ASR passes on a prepared clip pair. clip_org may
-    equal clip_enh (separated-speaker streams have no distinct original source)."""
-    mms = lang_id_service.identify(clip_enh)
-    mms_top1 = mms.get("top1")
-    mms_top1_conf = mms.get("top1_confidence") or 0.0
-    routing_lang_2 = lang_id_service.to_iso639_1(mms_top1)
+def run_models(clean_clip, *, file_prior):
+    """Three independent ASR models on one robustly-preprocessed clip.
 
-    p1 = _clean_pass(_whisper_clip(clip_enh, "transcribe"))
-    whisper_lang = p1.get("language") or "und"
+    Language routing: trust clip MMS-LID above the gate (and within ALLOWED_LANGS
+    when set), else the file prior, else Whisper self-detect. Each pass is passed
+    through the hallucination filter. Models never substitute for one another:
+    IndicConformer abstains on unsupported languages instead of falling back to
+    Whisper, so the three passes stay genuinely independent.
+    """
+    mms = lang_id_service.identify(clean_clip)
+    clip_lang = lang_id_service.to_iso639_1(mms.get("top1"))
+    clip_conf = mms.get("top1_confidence") or 0.0
 
-    # Trust MMS-LID routing only above the confidence floor; else Whisper detect.
-    if routing_lang_2 and mms_top1_conf >= config.MMS_LID_MIN_CONFIDENCE:
-        routing_lang = routing_lang_2
+    if clip_lang and clip_conf >= config.LID_VOTE_MIN_CONF and (
+            not config.ALLOWED_LANGS or clip_lang in config.ALLOWED_LANGS):
+        routing_lang = clip_lang
+    elif file_prior:
+        routing_lang = file_prior
     else:
-        routing_lang = whisper_lang or "und"
+        routing_lang = None  # whisper auto
 
-    lang_mismatch = bool(
-        routing_lang_2 and mms_top1_conf >= config.MMS_LID_MIN_CONFIDENCE
-        and whisper_lang != "und" and routing_lang_2 != whisper_lang)
+    # Whisper (independent; constrained only when we have a confident routing lang).
+    w = _whisper_clip(clean_clip, "transcribe", language=routing_lang or "auto")
+    whisper_lang = w.get("language") or "und"
+    if routing_lang is None:
+        routing_lang = whisper_lang
+    w = hallucination_filter.filter_pass(w, no_speech_prob=w.get("no_speech_prob"))
 
-    p2 = _clean_pass(indic_asr_service.transcribe_clip(clip_enh, routing_lang))
-    p3 = _clean_pass(seamless_service.transcribe_clip(clip_org, routing_lang))
+    # IndicConformer (abstains on unsupported lang; never whisper fallback).
+    i = indic_asr_service.transcribe_clip(clean_clip, routing_lang)
+    i = hallucination_filter.filter_pass(i)
 
-    return {"mms": mms, "mms_top1": mms_top1, "whisper_lang": whisper_lang,
-            "routing_lang": routing_lang, "lang_mismatch": lang_mismatch,
-            "p1": p1, "p2": p2, "p3": p3}
+    # SeamlessM4T (independent).
+    m = seamless_service.transcribe_clip(clean_clip, routing_lang)
+    m = hallucination_filter.filter_pass(m)
+
+    return {"lang_id": {"mms_top1": mms.get("top1"),
+                        "mms_top1_confidence": mms.get("top1_confidence"),
+                        "mms_top2": mms.get("top2"),
+                        "mms_top2_confidence": mms.get("top2_confidence"),
+                        "whisper_lang": whisper_lang, "routing_lang": routing_lang},
+            "whisper": w, "indic": i, "seamless": m}
 
 
-def _emit_segment(job, session, *, start, end, speaker, asr, clip_enh, clip_org,
-                  pass3_source, diarization_meta, extra_flags):
-    """Build candidates + cross-model verdict and persist one segment row.
+def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_raw,
+                  diarization_meta, extra_flags):
+    """Build per-model candidates + cross-model consensus and persist one segment.
+    The DB row carries the consensus text/pass (drives review/certify); the full
+    per-model candidates are stored for the independent per-model transcripts.
     Returns (segment_id, flagged, per_segment_entry)."""
-    p1, p2, p3 = asr["p1"], asr["p2"], asr["p3"]
-    whisper_lang, routing_lang, mms = asr["whisper_lang"], asr["routing_lang"], asr["mms"]
+    w, i, m = asr["whisper"], asr["indic"], asr["seamless"]
+    routing_lang = asr["lang_id"]["routing_lang"]
 
     candidates = {
-        "lang_id": {
-            "mms_top1": asr["mms_top1"],
-            "mms_top1_confidence": mms.get("top1_confidence"),
-            "mms_top2": mms.get("top2"),
-            "mms_top2_confidence": mms.get("top2_confidence"),
-            "whisper_lang": whisper_lang,
-            "routing_lang": routing_lang,
-            "lang_mismatch": asr["lang_mismatch"],
-        },
-        "pass1_whisper": {"text": p1["text"], "confidence": p1["confidence"],
-                          "language": whisper_lang, "model": "openai/whisper-large-v3"},
-        "pass2_indic_conformer": {"text": p2["text"], "confidence": p2["confidence"],
+        "lang_id": asr["lang_id"],
+        "pass1_whisper": {"text": w["text"], "confidence": w.get("confidence"),
+                          "language": asr["lang_id"]["whisper_lang"],
+                          "model": "openai/whisper-large-v3",
+                          "hallucination": w.get("hallucination")},
+        "pass2_indic_conformer": {"text": i["text"], "confidence": i.get("confidence"),
                                   "language": routing_lang,
-                                  "model": p2.get("model", config.INDIC_CONFORMER_MODEL)},
-        "pass3_seamless": {"text": p3["text"], "confidence": p3["confidence"],
+                                  "model": i.get("model", config.INDIC_CONFORMER_MODEL),
+                                  "abstained": i.get("abstained", False),
+                                  "hallucination": i.get("hallucination")},
+        "pass3_seamless": {"text": m["text"], "confidence": m.get("confidence"),
                            "language": routing_lang, "model": config.SEAMLESS_MODEL,
-                           "audio_source": pass3_source},
+                           "hallucination": m.get("hallucination")},
         "diarization": diarization_meta,
     }
-    texts = {"pass1_whisper": p1["text"], "pass2_indic_conformer": p2["text"],
-             "pass3_seamless": p3["text"]}
-    confs = {"pass1_whisper": p1["confidence"], "pass2_indic_conformer": p2["confidence"],
-             "pass3_seamless": p3["confidence"]}
-    sim = embedding_service.similarity(p1["text"], p2["text"])
-    verdict = cross_model.compare_passes(texts, confs, vad_positive=True,
-                                         embedding_sim=sim)
+    texts = {"pass1_whisper": w["text"], "pass2_indic_conformer": i["text"],
+             "pass3_seamless": m["text"]}
+    confs = {"pass1_whisper": w.get("confidence"),
+             "pass2_indic_conformer": i.get("confidence"),
+             "pass3_seamless": m.get("confidence")}
+    verdict = cross_model.compare_passes(texts, confs, embed_fn=embedding_service.similarity,
+                                         agreement_min=config.AGREEMENT_MIN)
+    candidates["agreement"] = verdict["agreement"]
+    candidates["consensus_pass"] = verdict["consensus_pass"]
 
     reasons = []
     if verdict["flagged"] and verdict.get("flag_reason"):
         reasons.append(verdict["flag_reason"])
-    if asr["lang_mismatch"]:
-        reasons.append("lang_id_mismatch")
     reasons.extend(extra_flags or [])
     flagged = bool(reasons)
-    flag_reason = "+".join(dict.fromkeys(reasons)) if reasons else verdict.get("flag_reason")
+    flag_reason = "+".join(dict.fromkeys(reasons)) if reasons else None
 
-    winning = p1["text"] or p2["text"] or p3["text"]
     seg_id = repo.add_segment(
-        session, file_id=job.file_id, start=start, end=end,
-        speaker=speaker, text=winning,
-        confidence=verdict["confidence"], source_pass="pass1_whisper",
-        flagged=flagged,
+        session, file_id=job.file_id, start=start, end=end, speaker=speaker,
+        text=verdict["consensus_text"], confidence=verdict["confidence"],
+        source_pass=verdict["consensus_pass"] or "none", flagged=flagged,
         review_status="pending" if flagged else "auto_accepted",
-        candidates=candidates, clip_original=clip_org, clip_enhanced=clip_enh,
+        candidates=candidates, clip_original=clip_raw, clip_enhanced=clip_clean,
         detected_language=routing_lang)
     entry = {"segment_id": seg_id, "edit_distance_norm": None,
-             "embedding_similarity": round(sim, 3), "avg_logprob": None,
+             "embedding_similarity": verdict["agreement"], "avg_logprob": None,
              "flag_reason": flag_reason}
     return seg_id, flagged, entry
 
@@ -393,7 +378,6 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
         storage.derivative_path(job.case_id, job.file_id, "clips", "_"))
     per_segment, flagged_count = [], 0
     enh_source = enhanced16 or original16
-    norm = config.CLIP_NORMALIZE
 
     # Hybrid segmentation: active-speaker partition (single + overlap units)
     # plus gap recovery for VAD speech pyannote left unattributed.
@@ -401,45 +385,54 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
 
     import torch as _torch
 
+    # Robust preprocessing per unit (denoise + loudnorm + edge-trim) -> one clean
+    # clip fed to all 3 models. Then a cheap MMS-LID pre-sweep over every clean
+    # clip yields a file-level language prior that tames per-clip LID misroutes.
+    prepared = []
+    lids = []
+    for idx, unit in enumerate(units):
+        clips = preprocess_service.prepare_clip(
+            enh_source, original16, unit["start"], unit["end"], workdir, idx, unit["speaker"])
+        prepared.append(clips)
+        lids.append(lang_id_service.identify(clips["clean"]))
+    file_prior = lang_id_service.vote_file_language(
+        lids, allowed_langs=config.ALLOWED_LANGS, min_conf=config.LID_VOTE_MIN_CONF)
+
     for idx, unit in enumerate(units):
         if _torch.cuda.is_available():
             _torch.cuda.empty_cache()
 
         utype = unit["type"]
         speaker = unit["speaker"]
-        clip_enh = os.path.join(workdir, f"seg_{idx:04d}_{speaker}_enh.wav")
-        clip_org = os.path.join(workdir, f"seg_{idx:04d}_{speaker}_org.wav")
-        clip_service.cut(enh_source, unit["start"], unit["end"], clip_enh, normalize=norm)
-        clip_service.cut(original16, unit["start"], unit["end"], clip_org, normalize=norm)
+        clips = prepared[idx]
 
         # Cross-talk: split into per-speaker streams, transcribe each one so
         # every overlapped voice is recovered (not just the loudest).
         if (utype == "overlap" and config.OVERLAP_SEPARATION_ENABLED
                 and (unit["end"] - unit["start"]) >= config.OVERLAP_MIN_DUR_S):
             stems = separation_service.separate_speakers(
-                clip_enh, workdir, f"seg_{idx:04d}")
+                clips["clean"], workdir, f"seg_{idx:04d}")
             if stems:
                 for si, stem in enumerate(stems):
                     if _torch.cuda.is_available():
                         _torch.cuda.empty_cache()
                     spk = (unit["speakers"][si] if si < len(unit["speakers"])
                            else f"overlap_spk{si}")
-                    asr = _three_pass_asr(stem, stem)
+                    asr = run_models(stem, file_prior=file_prior)
                     meta = {"speaker": spk,
                             "concurrent_speakers": [s for s in unit["speakers"] if s != spk],
                             "is_overlap": True, "segment_type": "overlap",
                             "separation": "sepformer", "stem_index": si}
                     _, flagged, entry = _emit_segment(
                         job, session, start=unit["start"], end=unit["end"],
-                        speaker=spk, asr=asr, clip_enh=stem, clip_org=stem,
-                        pass3_source="separated_stem", diarization_meta=meta,
-                        extra_flags=["overlapping_speech"])
+                        speaker=spk, asr=asr, clip_clean=stem, clip_raw=stem,
+                        diarization_meta=meta, extra_flags=["overlapping_speech"])
                     flagged_count += 1 if flagged else 0
                     per_segment.append(entry)
                 continue
             # Separation failed -> fall through to mixed-clip transcription.
 
-        asr = _three_pass_asr(clip_enh, clip_org)
+        asr = run_models(clips["clean"], file_prior=file_prior)
         extra = []
         if utype == "overlap":
             extra.append("overlapping_speech")
@@ -450,8 +443,8 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
                 "is_overlap": utype == "overlap", "segment_type": utype}
         _, flagged, entry = _emit_segment(
             job, session, start=unit["start"], end=unit["end"],
-            speaker=speaker, asr=asr, clip_enh=clip_enh, clip_org=clip_org,
-            pass3_source="original", diarization_meta=meta, extra_flags=extra)
+            speaker=speaker, asr=asr, clip_clean=clips["clean"], clip_raw=clips["raw"],
+            diarization_meta=meta, extra_flags=extra)
         flagged_count += 1 if flagged else 0
         per_segment.append(entry)
 
@@ -561,6 +554,12 @@ def run_pipeline(job_id: str) -> str:
             data = ts.build(job.case_id, job.file_id, src_hash, segs,
                             status="machine_assisted_pending_certification")
             ts.write(job.case_id, job.file_id, data)
+            # Independent per-model transcripts + cross-model validation report.
+            for pass_key, name in ts.PASS_FILE_NAMES.items():
+                ts.write_named(job.case_id, job.file_id, name,
+                               ts.build_per_model(job.file_id, segs, pass_key))
+            ts.write_named(job.case_id, job.file_id, "validation_report",
+                           ts.build_validation_report(job.file_id, segs))
             au.append_entry(job.case_id, file_id=job.file_id, stage="L8",
                             parameters={"segments": len(segs)}, session=s)
             s.commit()
