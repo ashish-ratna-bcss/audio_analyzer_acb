@@ -119,7 +119,7 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/LaBSE")
 # (loud cross-talk, far-field, music-masked speech) and low-volume conversation.
 # Nothing inside the VAD union ever goes untranscribed.
 GAP_RECOVERY_ENABLED = os.getenv("GAP_RECOVERY_ENABLED", "true").lower() == "true"
-GAP_WINDOW_S = float(os.getenv("GAP_WINDOW_S", "20.0"))   # split long gaps into windows
+GAP_WINDOW_S = float(os.getenv("GAP_WINDOW_S", "10.0"))   # split long gaps into windows (shorter = fewer silence hallucinations)
 GAP_MIN_DUR_S = float(os.getenv("GAP_MIN_DUR_S", "1.0"))  # ignore micro-gaps
 
 # pyannote 3.1 sensitivity. min_duration_off=0 stops the pipeline bridging over
@@ -140,3 +140,31 @@ CLIP_NORMALIZE = os.getenv("CLIP_NORMALIZE", "true").lower() == "true"
 # Below this MMS-LID top-1 confidence, ignore its routing and fall back to
 # Whisper auto-detect (low-conf LID misfires poison all 3 ASR passes).
 MMS_LID_MIN_CONFIDENCE = float(os.getenv("MMS_LID_MIN_CONFIDENCE", "0.5"))
+
+# --- Phase: independent multi-model ASR + cross-model validation ---
+
+# Allowed language ISO-639-1 set. Empty = open auto-detect (default). Set e.g.
+# ALLOWED_LANGS=te,en,hi to constrain a known-language case and kill LID misroutes.
+ALLOWED_LANGS = {c.strip() for c in os.getenv("ALLOWED_LANGS", "").split(",") if c.strip()}
+
+# Min MMS-LID top-1 confidence for a clip's LID to count toward the file vote
+# and to be trusted over the file prior.
+LID_VOTE_MIN_CONF = float(os.getenv("LID_VOTE_MIN_CONF", "0.5"))
+
+# Whisper no_speech_prob above this blanks the pass (true non-speech / silence).
+NO_SPEECH_MAX = float(os.getenv("NO_SPEECH_MAX", "0.6"))
+
+# Mean pairwise embedding cosine below this flags a segment for cross-model disagreement.
+AGREEMENT_MIN = float(os.getenv("AGREEMENT_MIN", "0.6"))
+
+# EBU R128 integrated loudness target for per-clip normalization (LUFS).
+LOUDNORM_LUFS = float(os.getenv("LOUDNORM_LUFS", "-16.0"))
+
+# Known ASR hallucination phrases emitted on non-speech (training-data ghosts).
+# Matched case- and punctuation-insensitive. Env-extendable via GHOST_PHRASES_EXTRA (comma-sep).
+GHOST_PHRASES = [
+    "thank you", "thank you.", "thanks for watching", "thanks for watching!",
+    "please subscribe", "subscribe", "like and subscribe", ". .", "...",
+    "[music]", "[music playing]", "[applause]", "(music)",
+    "ご視聴ありがとうございました", "Продолжение следует...",
+] + [p.strip() for p in os.getenv("GHOST_PHRASES_EXTRA", "").split(",") if p.strip()]
