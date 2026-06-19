@@ -272,6 +272,10 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
     seg_units = _build_turn_segments(turns, union)
 
     for idx, unit in enumerate(seg_units):
+        import torch as _torch
+        if _torch.cuda.is_available():
+            _torch.cuda.empty_cache()
+
         speaker = unit["speaker"]
         concurrent = _overlapping_speakers(unit, seg_units)
 
