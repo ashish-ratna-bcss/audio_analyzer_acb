@@ -7,15 +7,23 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# sox + libsox-dev are required by NeMo's `sox` python dep (it shells out to the
+# SoX binary and links libsox at build).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-dev build-essential ffmpeg bash git \
+        sox libsox-dev \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Build deps first, then NeMo (its own torch), then the thin server stack.
-RUN pip3 install --no-cache-dir "Cython>=3.0" "setuptools<76" wheel
+# Build deps first. NeMo's `sox` dep imports numpy + typing_extensions in its
+# setup.py and breaks under pip build isolation, so preinstall those and build
+# sox with --no-build-isolation BEFORE NeMo (NeMo then sees sox satisfied).
+RUN pip3 install --no-cache-dir "Cython>=3.0" "setuptools<76" wheel \
+        numpy==1.26.4 typing_extensions && \
+    pip3 install --no-cache-dir --no-build-isolation sox
+
 COPY requirements_nemo.txt .
 RUN pip3 install --no-cache-dir -r requirements_nemo.txt
 RUN pip3 install --no-cache-dir fastapi==0.111.0 "uvicorn[standard]==0.29.0" \
