@@ -155,16 +155,16 @@ def _l3_vad_union(job, in16, enhanced, stem, session):
 
 
 def _l4_diarize(job, in48, session):
-    turns = diarization_service.diarize_with_overlap(in48)
+    turns, model_version = diarization_service.diarize_with_overlap(in48)
     out = storage.derivative_path(job.case_id, job.file_id, "diarization",
                                   f"{job.file_id}_speaker_timeline.json")
     speakers = sorted({t["speaker"] for t in turns})
     with open(out, "w") as f:
         json.dump({"file_id": job.file_id, "speakers": speakers,
                    "timeline": turns,
-                   "model_version": config.DIARIZATION_MODEL}, f, indent=2)
+                   "model_version": model_version}, f, indent=2)
     au.append_entry(job.case_id, file_id=job.file_id, stage="L4",
-                    model=config.DIARIZATION_MODEL,
+                    model=model_version,
                     parameters={"turns": len(turns)}, session=session)
     session.commit()
     return turns

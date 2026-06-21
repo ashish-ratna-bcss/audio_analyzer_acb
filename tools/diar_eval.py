@@ -103,7 +103,7 @@ def main():
     
     print(f"Running {args.diarizer} diarization on {args.audio}...")
     from services.diarization_service import diarize_with_overlap
-    hyp_segments = diarize_with_overlap(args.audio)
+    hyp_segments, _model = diarize_with_overlap(args.audio)
     print(f"Generated {len(hyp_segments)} hypothesis segments.")
     
     print("\n--- Evaluation Results ---")

@@ -62,7 +62,7 @@ def _stub_models(monkeypatch, request):
         from services import (diarization_service, whisper_service,
                               indic_asr_service, embedding_service)
         monkeypatch.setattr(diarization_service, "diarize_with_overlap",
-            lambda p, num_speakers=None: [{"start": 0.0, "end": 1.0, "speaker": "Speaker_1"}],
+            lambda p, num_speakers=None: ([{"start": 0.0, "end": 1.0, "speaker": "Speaker_1"}], "mock-diarizer"),
             raising=False)
         monkeypatch.setattr(whisper_service, "transcribe",
             lambda path, **k: {"language": "te", "duration": 1.0, "segments": [

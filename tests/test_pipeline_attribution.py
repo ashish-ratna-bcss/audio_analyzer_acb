@@ -27,8 +27,8 @@ def _tone(path):
 
 def _mock_models(monkeypatch):
     monkeypatch.setattr(diarization_service, "diarize_with_overlap",
-                        lambda p, num_speakers=None: [
-                            {"start": 0.0, "end": 1.0, "speaker": "Speaker_1"}])
+                        lambda p, num_speakers=None: (
+                            [{"start": 0.0, "end": 1.0, "speaker": "Speaker_1"}], "mock-diarizer"))
     monkeypatch.setattr(lang_id_service, "identify",
                         lambda p: {"top1": "tel", "top1_confidence": 0.9,
                                    "top2": None, "top2_confidence": 0.0})
