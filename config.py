@@ -88,14 +88,25 @@ GPU_QUEUE = "gpu_queue"
 CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "false").lower() == "true"
 
 # --- Phase 3: recall branches (enhancement / VAD union / separation) ---
-# Silero VAD sensitivity for L3 segment detection.
-# Threshold 0.10: Silero is a phoneme-aware neural model so it still filters
-# environmental noise at this level while catching low-volume conversational speech.
-# Raise if too many noise-only segments appear; lower to recover more quiet speech.
-VAD_THRESHOLD = 0.10
-VAD_MIN_SPEECH_MS = 50           # catch short utterances / word fragments
-VAD_SPEECH_PAD_MS_L3 = 500      # wider pad so speech edges aren't clipped
-VAD_MIN_SILENCE_MS_L3 = 200     # merge segments within 200ms (avoids word-level fragmentation)
+# Silero VAD sensitivity for L3 segment detection. Env-overridable for tuning
+# without a rebuild.
+# Threshold 0.10 was far too low: on noisy forensic recordings Silero flagged the
+# WHOLE file as speech (every branch -> one 0..end block), so gap-recovery forced
+# IndicConformer onto pure silence and it hallucinated cross-script garbage
+# (fabricated text — the worst forensic failure). Empirically on BVR_23_02_2021:
+# 0.10 -> whole file; 0.30 -> 94s/69 segs; 0.50 -> 60s/50 segs (ground-truth
+# speech ~65s). 0.35 keeps recall while cutting noise-only regions.
+VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", "0.5"))
+VAD_MIN_SPEECH_MS = int(os.getenv("VAD_MIN_SPEECH_MS", "150"))  # drop sub-150ms noise blips
+VAD_SPEECH_PAD_MS_L3 = int(os.getenv("VAD_SPEECH_PAD_MS_L3", "250"))  # less bridging of separate utterances into one block
+VAD_MIN_SILENCE_MS_L3 = int(os.getenv("VAD_MIN_SILENCE_MS_L3", "200"))  # merge segments within 200ms (avoids word-level fragmentation)
+# Recall branches (enhanced / separated) in the L3 VAD union. The additive union
+# adds ANY region a branch flags as speech. DeepFilterNet enhancement creates
+# artifacts Silero reads as speech, so enhanced VAD injects phantom regions ->
+# ASR runs on noise -> fabricated text. For forensic evidence, anchor speech
+# detection on the ORIGINAL track only (precision over recall). Set to 1 to
+# restore the additive recall behaviour.
+VAD_INCLUDE_RECALL_BRANCHES = os.getenv("VAD_INCLUDE_RECALL_BRANCHES", "0") == "1"
 DFN_MODEL = "DeepFilterNet3"          # DeepFilterNet3 enhancement
 DEMUCS_MODEL = "htdemucs_ft"          # HTDemucs separation checkpoint
 
@@ -152,6 +163,15 @@ ALLOWED_LANGS = {c.strip() for c in os.getenv("ALLOWED_LANGS", "").split(",") if
 # and to be trusted over the file prior.
 LID_VOTE_MIN_CONF = float(os.getenv("LID_VOTE_MIN_CONF", "0.5"))
 
+# Min MMS-LID confidence required for a clip to be routed to a language that
+# DIFFERS from the file prior. Recordings are usually dominated by one language;
+# per-clip LID on noise/short clips returns random languages at mid confidence,
+# poisoning those segments. A clip matching the file prior is trusted at
+# LID_VOTE_MIN_CONF; deviating from it demands this higher bar (genuine
+# code-switch still passes). Keeps auto-detect fully general — the prior is
+# whatever language actually dominates the file, no hardcoded language.
+LID_DEVIATE_MIN_CONF = float(os.getenv("LID_DEVIATE_MIN_CONF", "0.85"))
+
 # Whisper no_speech_prob above this blanks the pass (true non-speech / silence).
 NO_SPEECH_MAX = float(os.getenv("NO_SPEECH_MAX", "0.6"))
 
@@ -178,3 +198,11 @@ INDIC_SELFCHECK_MIN = float(os.getenv("INDIC_SELFCHECK_MIN", "0.6"))
 
 # Final confidence below this flags the segment for human review.
 INDIC_CONF_MIN = float(os.getenv("INDIC_CONF_MIN", "0.5"))
+
+# Hard suppression floor. At/below this enh-vs-original agreement the two passes
+# share essentially no signal (one empty or totally divergent) -> the "text" is
+# noise the model emitted onto non-speech. For forensic integrity we BLANK it
+# (mark unintelligible, keep the clip for review) rather than enter fabricated
+# words into the record. Distinct from INDIC_SELFCHECK_MIN, which only flags.
+# Conservative default keeps borderline-real low-agreement speech.
+INDIC_SUPPRESS_BELOW = float(os.getenv("INDIC_SUPPRESS_BELOW", "0.1"))

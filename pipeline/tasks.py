@@ -117,12 +117,17 @@ def _l2b_separate(job, in16, source_hash, session):
 
 def _l3_vad_union(job, in16, enhanced, stem, session):
     branches = {"original": vad_service.detect_speech(in16)}
-    if enhanced:
+    # Recall branches (enhanced / separated) are opt-in. The additive union adds
+    # every region a branch calls speech; DeepFilterNet artifacts make Silero
+    # over-detect, injecting phantom speech that ASR then hallucinates text onto.
+    # For forensic evidence we anchor on the original track only by default.
+    recall = config.VAD_INCLUDE_RECALL_BRANCHES
+    if enhanced and recall:
         branches["enhanced"] = vad_service.detect_speech(enhanced)
 
     pre_union = vad_union.union_segments(list(branches.values()))
     separation_included = None
-    if stem:
+    if stem and recall:
         stem_segs = vad_service.detect_speech(stem)
         separation_included = vad_union.should_include_separation(
             len(pre_union), len(stem_segs))
@@ -278,8 +283,15 @@ def run_indic(clean_clip, raw_clip, *, file_prior):
     clip_lang = lang_id_service.to_iso639_1(mms.get("top1"))
     clip_conf = mms.get("top1_confidence") or 0.0
 
-    if clip_lang and clip_conf >= config.LID_VOTE_MIN_CONF and (
-            not config.ALLOWED_LANGS or clip_lang in config.ALLOWED_LANGS):
+    # Trust per-clip LID only with enough confidence. Crucially, deviating from
+    # the file prior (the language that dominates this recording) demands a HIGHER
+    # bar than matching it — noise/short clips yield confident-but-wrong languages
+    # that would otherwise poison the segment. Genuine code-switching still passes
+    # at LID_DEVIATE_MIN_CONF. Generic: the prior is data-derived, no hardcoding.
+    allowed = (not config.ALLOWED_LANGS or clip_lang in config.ALLOWED_LANGS)
+    deviates = bool(clip_lang and file_prior and clip_lang != file_prior)
+    needed_conf = config.LID_DEVIATE_MIN_CONF if deviates else config.LID_VOTE_MIN_CONF
+    if clip_lang and allowed and clip_conf >= needed_conf:
         routing_lang = clip_lang
     else:
         routing_lang = file_prior  # may be None -> indic abstains
@@ -317,6 +329,16 @@ def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_ra
     Returns (segment_id, flagged, per_segment_entry)."""
     routing_lang = asr["lang_id"]["routing_lang"]
 
+    # Forensic suppression: at/below the agreement floor the enhanced and original
+    # passes share no signal -> the text is noise emitted onto non-speech. Blank it
+    # (the clip is preserved on the segment for a reviewer to listen to) so the
+    # record never carries fabricated words. Keep already-empty/abstained as-is.
+    suppressed = False
+    if (asr["text"] and not asr["abstained"]
+            and asr["agreement"] <= config.INDIC_SUPPRESS_BELOW):
+        asr = {**asr, "text": "", "source": "suppressed_low_agreement"}
+        suppressed = True
+
     candidates = {
         "lang_id": asr["lang_id"],
         "indic_conformer": {
@@ -332,6 +354,8 @@ def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_ra
     reasons = []
     if asr["abstained"]:
         reasons.append("non_indic_abstain")
+    elif suppressed:
+        reasons.append("suppressed_low_agreement")
     elif not asr["text"]:
         reasons.append("asr_empty")
     else:
