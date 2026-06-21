@@ -1,0 +1,98 @@
+# Maximum Verbosity Profile
+# Capture ALL spoken content including fillers, hesitations, repetitions
+# Ideal for court proceedings, legal evidence, complete word-for-word record
+
+profile_name: "maximum_verbosity"
+description: "Maximum word retention - capture all spoken content including fillers"
+processing_speed_multiplier: 2.5
+verbosity_level: 3  # 1=minimal, 2=standard, 3=maximum, 4=ultra
+
+# TRANSCRIPTION
+transcription:
+  decoding:
+    beam_size: 20              # Larger beam to explore more paths
+    beam_threshold: 15.0
+    lm_weight: 1.0             # Balanced language model
+    ctc_weight: 0.3            # Favor Attention (more variants)
+    confidence_threshold: 0.3  # Lower threshold captures more words
+    max_active_states: 30000   # More states = more possibilities
+
+  preprocessing:
+    vad_threshold: 0.5         # Capture quieter speech
+    sample_rate: 16000
+    normalization: true
+    mel_filter_banks: 80
+    normalize_audio: true
+
+  segmentation:
+    min_segment_duration: 0.3  # Keep very short utterances
+    max_segment_duration: 20
+    silence_threshold: 0.3     # Detect subtle silence
+    dynamic_boundaries: true
+    preserve_pauses: true      # Mark [pause] in output
+
+  filler_words:
+    preserve: true             # um, ah, uh, er, hmm - keep all
+    mark_explicitly: false     # Don't add [filler:] markers
+    preserve_hesitations: true # False starts, repairs
+
+# DIARIZATION
+diarization:
+  backend: "sortformer"        # More accurate speaker detection
+
+  sortformer:
+    batch_size: 1
+    num_speakers: null         # Auto-detect
+    overlap_threshold: 0.3     # Detect subtle overlaps
+    speaker_embedding_dim: 512
+    confidence_threshold: 0.5
+
+  pyannote:
+    segmentation_threshold: 0.3
+    speaker_threshold: 0.7
+    min_duration_on: 0.5
+    min_duration_off: 0.5
+
+# POST-PROCESSING
+postprocessing:
+  remove_filler_words: false    # KEEP: um, ah, uh, er
+  remove_repetitions: false     # KEEP: repeated words
+  normalize_contractions: false # KEEP: "gonna", "wanna"
+  remove_disfluencies: false    # KEEP: false starts
+  preserve_hesitations: true    # Mark hesitations
+  preserve_pauses: true         # Include [pause] markers
+  mark_uncertainty: false       # Don't mark low-confidence
+  mark_confidence: false        # Don't include confidence scores
+  aggressive_cleaning: false    # Minimal text cleanup
+
+# OUTPUT FORMAT
+output:
+  include_confidence: false     # Don't show confidence in main output
+  include_timing: false         # Don't show timestamps
+  mark_fillers: false           # Don't add [filler] markers
+  preserve_original_form: true  # "gonna" not "going to"
+
+# EVALUATION EXPECTATIONS
+expected_metrics:
+  wer: 0.12                     # Slightly higher (more attempted)
+  cer: 0.08
+  word_retention_rate: 0.95     # 95% of reference words captured
+  filler_word_recall: 0.92      # 92% of filler words captured
+  der: 0.05
+  speaker_attribution: 0.96
+
+# RESOURCE REQUIREMENTS
+resources:
+  gpu_memory_gb: 4
+  cpu_cores: 4
+  estimated_time_multiplier: 2.5
+  max_concurrent_files: 1
+
+# USE CASES
+use_cases:
+  - "Court proceedings"
+  - "Legal evidence"
+  - "Forensic analysis"
+  - "Complete word-for-word record"
+  - "Witness statements"
+  - "Interrogation transcripts"
