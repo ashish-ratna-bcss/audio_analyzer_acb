@@ -9,7 +9,7 @@ from evaluation.metrics import (
     TranscriptionEvaluator,
     TranscriptionMetrics,
 )
-from config.optimization_config import ConfigManager, OptimizationConfig
+from optimization.optimization_config import ConfigManager, OptimizationConfig
 
 
 class TestTranscriptionMetrics:
