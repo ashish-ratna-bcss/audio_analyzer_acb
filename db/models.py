@@ -18,7 +18,8 @@ def _now() -> datetime:
 class JobStatus:
     QUEUED = "queued"
     RUNNING = "running"
-    NEEDS_REVIEW = "needs_review"
+    COMPLETED = "completed"        # pipeline finished; transcript + diarization ready
+    NEEDS_REVIEW = "needs_review"  # legacy human-review gate (no longer the default end state)
     CERTIFIED = "certified"
     FAILED = "failed"
     QUARANTINED = "quarantined"

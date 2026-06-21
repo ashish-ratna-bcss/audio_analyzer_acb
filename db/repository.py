@@ -52,6 +52,11 @@ def get_file(session, file_id: str):
     return session.get(File, file_id)
 
 
+def list_files(session, case_id: str):
+    return session.query(File).filter(File.case_id == case_id).order_by(
+        File.created_at).all()
+
+
 def set_file_hash(session, file_id: str, sha256: str):
     f = session.get(File, file_id)
     f.source_sha256 = sha256

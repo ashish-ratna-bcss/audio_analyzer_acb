@@ -17,8 +17,30 @@ from services import (diarization_service, indic_asr_service,
                       embedding_service, clip_service, lang_id_service)
 from services import cross_model
 from services import transcript_service as ts
+from services import webhook_service
 from services.hashing import sha256_file
 from services.ffmpeg_service import convert_dual_rate, UnsupportedFormatError
+
+
+# Coarse progress percentage per stage — surfaced to webhooks / status polling so
+# an integration can render a progress bar without knowing the stage internals.
+STAGE_PROGRESS = {
+    "L0": 5, "L1": 15, "L2": 30, "L2b": 35, "L3": 45,
+    "L4": 55, "L5": 75, "L6": 85, "L8": 95,
+    "completed": 100, "failed": 100, "quarantined": 100,
+}
+
+
+def _emit(callback_url, *, job_id, case_id, file_id, status, stage):
+    """Best-effort job webhook. No-op when no callback_url was supplied."""
+    if not callback_url:
+        return
+    webhook_service.notify(callback_url, {
+        "job_id": job_id, "case_id": case_id, "file_id": file_id,
+        "status": status, "stage": stage,
+        "progress": STAGE_PROGRESS.get(stage if status == JobStatus.RUNNING else status, 0),
+        "result_url": f"/jobs/{job_id}/result" if status == JobStatus.COMPLETED else None,
+    })
 
 
 def _inbox_original(case_id: str, file_id: str, ext: str) -> str:
@@ -487,8 +509,15 @@ def run_pipeline(job_id: str) -> str:
         if job is None:
             raise ValueError(f"job not found: {job_id}")
         case_id, file_id = job.case_id, job.file_id
+        callback_url = (job.options or {}).get("callback_url")
         repo.update_job(s, job_id, status=JobStatus.RUNNING, stage="L0")
         s.commit()
+    _emit(callback_url, job_id=job_id, case_id=case_id, file_id=file_id,
+          status=JobStatus.RUNNING, stage="L0")
+
+    def stage(st):
+        _emit(callback_url, job_id=job_id, case_id=case_id, file_id=file_id,
+              status=JobStatus.RUNNING, stage=st)
 
     # L0 + L1 with quarantine on bad/missing input.
     try:
@@ -500,8 +529,11 @@ def run_pipeline(job_id: str) -> str:
             repo.update_job(s, job_id, stage="L1")
             s.commit()
             _l1_normalize(job, original_path, source_hash, s)
+        stage("L1")
     except (FileNotFoundError, UnsupportedFormatError, RuntimeError) as e:
         _quarantine(job_id, case_id, file_id, str(e))
+        _emit(callback_url, job_id=job_id, case_id=case_id, file_id=file_id,
+              status=JobStatus.QUARANTINED, stage="quarantine")
         return JobStatus.QUARANTINED
 
     # L2/L2b/L3 recall branches.
@@ -512,18 +544,20 @@ def run_pipeline(job_id: str) -> str:
                                            f"{job.file_id}_16k_mono.wav")
             in48 = storage.derivative_path(job.case_id, job.file_id, "normalized",
                                            f"{job.file_id}_48k.wav")
-            repo.update_job(s, job_id, stage="L2"); s.commit()
+            repo.update_job(s, job_id, stage="L2"); s.commit(); stage("L2")
             enhanced = _l2_enhance(job, in16, source_hash, s)
             stem = None
             if (job.options or {}).get("separate"):
-                repo.update_job(s, job_id, stage="L2b"); s.commit()
+                repo.update_job(s, job_id, stage="L2b"); s.commit(); stage("L2b")
                 stem = _l2b_separate(job, in48, source_hash, s)
-            repo.update_job(s, job_id, stage="L3"); s.commit()
+            repo.update_job(s, job_id, stage="L3"); s.commit(); stage("L3")
             _l3_vad_union(job, in16, enhanced, stem, s)
     except Exception as e:
         with get_session() as s:
             repo.update_job(s, job_id, status=JobStatus.FAILED, error=str(e))
             s.commit()
+        _emit(callback_url, job_id=job_id, case_id=case_id, file_id=file_id,
+              status=JobStatus.FAILED, stage="L3")
         raise
 
     # L4/L5/L6 attribution + ASR + confidence.
@@ -541,27 +575,29 @@ def run_pipeline(job_id: str) -> str:
                                                f"{job.file_id}_segments_union.json")
             union = json.load(open(vad_json))["segments"]
 
-            repo.update_job(s, job_id, stage="L4"); s.commit()
+            repo.update_job(s, job_id, stage="L4"); s.commit(); stage("L4")
             turns = _l4_diarize(job, in48, s)
-            repo.update_job(s, job_id, stage="L5"); s.commit()
+            repo.update_job(s, job_id, stage="L5"); s.commit(); stage("L5")
             per_segment, flagged = _l5_l6_segments(job, union, turns, enh, in16, s)
-            repo.update_job(s, job_id, stage="L6"); s.commit()
+            repo.update_job(s, job_id, stage="L6"); s.commit(); stage("L6")
             _write_confidence_report(job, per_segment, flagged, s)
     except Exception as e:
         with get_session() as s:
             repo.update_job(s, job_id, status=JobStatus.FAILED, error=str(e))
             s.commit()
+        _emit(callback_url, job_id=job_id, case_id=case_id, file_id=file_id,
+              status=JobStatus.FAILED, stage="L5")
         raise
 
     # L8 output generation.
     try:
         with get_session() as s:
             job = repo.get_job(s, job_id)
-            repo.update_job(s, job_id, stage="L8"); s.commit()
+            repo.update_job(s, job_id, stage="L8"); s.commit(); stage("L8")
             segs = repo.list_segments(s, job.file_id)
             src_hash = repo.get_file(s, job.file_id).source_sha256
             data = ts.build(job.case_id, job.file_id, src_hash, segs,
-                            status="machine_assisted_pending_certification")
+                            status="completed")
             ts.write(job.case_id, job.file_id, data)            # certified_transcript.json
             # IndicConformer transcript + single-model self-check validation report.
             ts.write_named(job.case_id, job.file_id, "indic_transcript", data)
@@ -575,9 +611,14 @@ def run_pipeline(job_id: str) -> str:
             au.append_entry(job.case_id, file_id=job.file_id, stage="L8",
                             parameters={"segments": len(segs)}, session=s)
             s.commit()
-            repo.update_job(s, job_id, status=JobStatus.NEEDS_REVIEW); s.commit()
-        return JobStatus.NEEDS_REVIEW
+            # No human-review gate: the pipeline completes and results are ready.
+            repo.update_job(s, job_id, status=JobStatus.COMPLETED); s.commit()
+        _emit(callback_url, job_id=job_id, case_id=case_id, file_id=file_id,
+              status=JobStatus.COMPLETED, stage="L8")
+        return JobStatus.COMPLETED
     except Exception as e:
         with get_session() as s:
             repo.update_job(s, job_id, status=JobStatus.FAILED, error=str(e)); s.commit()
+        _emit(callback_url, job_id=job_id, case_id=case_id, file_id=file_id,
+              status=JobStatus.FAILED, stage="L8")
         raise

@@ -102,7 +102,7 @@ def test_segments_persisted_and_artifacts_written(tmp_path, monkeypatch):
     os.makedirs(inbox, exist_ok=True)
     _tone(os.path.join(inbox, f"{file_id}.wav"))
 
-    assert ptasks.run_pipeline.apply(args=[job_id]).get() == JobStatus.NEEDS_REVIEW
+    assert ptasks.run_pipeline.apply(args=[job_id]).get() == JobStatus.COMPLETED
 
     with dbbase.get_session() as s:
         segs = repo.list_segments(s, file_id)
