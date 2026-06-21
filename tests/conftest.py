@@ -59,15 +59,11 @@ def _stub_models(monkeypatch, request):
     monkeypatch.setattr(separation_service, "separate_vocals", _copy, raising=False)
 
     try:
-        from services import (diarization_service, whisper_service,
+        from services import (diarization_service,
                               indic_asr_service, embedding_service)
         monkeypatch.setattr(diarization_service, "diarize_with_overlap",
             lambda p, num_speakers=None: ([{"start": 0.0, "end": 1.0, "speaker": "Speaker_1"}], "mock-diarizer"),
             raising=False)
-        monkeypatch.setattr(whisper_service, "transcribe",
-            lambda path, **k: {"language": "te", "duration": 1.0, "segments": [
-                {"start": 0.0, "end": 1.0, "text": "stub", "confidence": 0.9,
-                 "no_speech_prob": 0.1, "compression_ratio": 1.0}]}, raising=False)
         monkeypatch.setattr(indic_asr_service, "transcribe_clip",
             lambda p, lang=None: {"text": "stub", "confidence": None, "language": lang,
                                   "model": "stub", "abstained": False}, raising=False)

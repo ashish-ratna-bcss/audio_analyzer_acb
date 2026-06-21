@@ -85,31 +85,6 @@ services:
     depends_on: [redis]
     restart: unless-stopped
 
-  # Sortformer diarization sidecar — isolated NeMo/torch. Built only when piloting:
-  #   docker compose --profile sortformer build sortformer
-  #   docker compose --profile sortformer up -d sortformer
-  # Enable use by setting DIARIZER=sortformer in .env (worker-gpu reaches it at
-  # http://sortformer:9000). Base image is never touched.
-  sortformer:
-    profiles: ["sortformer"]
-    build:
-      context: .
-      dockerfile: Dockerfile.sortformer
-    image: forensic-sortformer
-    environment:
-      - SORTFORMER_NEMO_MODEL=nvidia/diar_sortformer_4spk-v1
-    volumes:
-      - case_data:/data/forensic-audio
-      - hf_cache:/root/.cache/huggingface
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    restart: unless-stopped
-
 volumes:
   case_data:
   redis_data:

@@ -35,7 +35,6 @@ WHISPER_COMPUTE_TYPE = os.getenv(
 )
 
 DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"
-DIARIZER = os.getenv("DIARIZER", "pyannote")  # "pyannote" or "sortformer"
 _hf_token = os.getenv("HF_TOKEN", "")
 if not _hf_token:
     warnings.warn(

@@ -5,7 +5,6 @@ aiofiles==23.2.1
 pydantic==2.7.1
 torch==2.3.0
 torchaudio==2.3.0
-faster-whisper==1.0.3
 pyannote.audio==3.3.1
 transformers==4.41.0
 pydub==0.25.1

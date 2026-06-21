@@ -4,8 +4,8 @@ from db import base as dbbase, repository as repo
 from db.models import JobStatus
 from unittest.mock import patch
 from services import (audit_service as au, manifest_service as man, storage,
-                      diarization_service, whisper_service, indic_asr_service,
-                      seamless_service, embedding_service, lang_id_service)
+                      diarization_service, indic_asr_service,
+                      embedding_service, lang_id_service)
 from pipeline import tasks as ptasks
 
 HAS_FFMPEG = shutil.which("ffmpeg") is not None

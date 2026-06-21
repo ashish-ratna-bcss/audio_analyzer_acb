@@ -91,17 +91,13 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate diarization performance against ground truth")
     parser.add_argument("--ref", required=True, help="Path to ground truth CSV")
     parser.add_argument("--audio", required=True, help="Path to audio file to test")
-    parser.add_argument("--diarizer", choices=["pyannote", "sortformer"], default="pyannote")
     args = parser.parse_args()
-    
-    # Force the diarizer choice
-    os.environ["DIARIZER"] = args.diarizer
-    
+
     print(f"Loading ground truth from {args.ref}")
     ref_segments = load_ground_truth(args.ref)
     print(f"Loaded {len(ref_segments)} reference segments.")
-    
-    print(f"Running {args.diarizer} diarization on {args.audio}...")
+
+    print(f"Running pyannote diarization on {args.audio}...")
     from services.diarization_service import diarize_with_overlap
     hyp_segments, _model = diarize_with_overlap(args.audio)
     print(f"Generated {len(hyp_segments)} hypothesis segments.")

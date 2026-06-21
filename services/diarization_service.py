@@ -1,5 +1,4 @@
 import logging
-import os
 
 from pyannote.audio import Pipeline
 import torch
@@ -71,25 +70,12 @@ def diarize(audio_path: str, num_speakers: int | None = 2) -> list[dict]:
 
 def diarize_with_overlap(audio_path: str, num_speakers: int | None = None):
     """pyannote 3.1 turns WITH overlapped speech retained — overlapping instants
-    yield multiple turns rather than being collapsed to one speaker. Dispatches
-    to Sortformer if configured.
+    yield multiple turns rather than being collapsed to one speaker.
 
-    Returns (segments, model_version) so callers record the backend that ACTUALLY
-    produced the result — Sortformer silently falls back to pyannote on sidecar
-    failure and the forensic record must not misattribute it."""
-    if getattr(config, "DIARIZER", "pyannote") == "sortformer":
-        # Sortformer runs in a separate sidecar (own NeMo/torch). On any failure
-        # fall back to pyannote so L4 never breaks the job.
-        try:
-            from services import sortformer_client
-            segs = sortformer_client.diarize_with_overlap(audio_path, num_speakers)
-            if segs:
-                sf_model = os.getenv("SORTFORMER_NEMO_MODEL", "nvidia/diar_sortformer_4spk-v1")
-                return segs, sf_model
-            logger.warning("Sortformer returned no segments; falling back to pyannote.")
-        except Exception as e:
-            logger.warning("Sortformer sidecar failed (%s); falling back to pyannote.", e)
-
+    Returns (segments, model_version) so callers record the backend on the
+    forensic record. pyannote is the sole diarizer: on the ACB test file it
+    correctly separated the two speakers, while Sortformer collapsed them into
+    one — so Sortformer was removed."""
     pipeline = load_pipeline()
     kwargs = {}
     if num_speakers is not None:
