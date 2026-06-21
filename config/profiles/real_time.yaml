@@ -1,0 +1,68 @@
+# Real-Time/Fast Profile
+# Moderate accuracy, fast processing (~1x baseline)
+# Use for quick processing, interactive use
+
+profile_name: "real_time"
+description: "Fast processing with acceptable accuracy"
+processing_speed_multiplier: 1.0
+
+# TRANSCRIPTION
+transcription:
+  decoding:
+    beam_size: 5               # Minimal beam search
+    beam_threshold: 15.0
+    lm_weight: 0.5             # Reduced LM influence
+    ctc_weight: 0.5            # Equal CTC/attention
+    confidence_threshold: 0.3  # Lower confidence threshold
+    max_active_states: 10000   # Fewer states
+
+  preprocessing:
+    vad_threshold: 0.7         # High VAD threshold (faster)
+    sample_rate: 16000
+    normalization: false       # Skip for speed
+    mel_filter_banks: 64       # Fewer features
+    normalize_audio: false
+
+  segmentation:
+    min_segment_duration: 2.0  # Longer segments = fewer processing
+    max_segment_duration: 30
+    silence_threshold: 0.7
+    dynamic_boundaries: false  # Fixed boundaries (faster)
+
+# DIARIZATION
+diarization:
+  backend: "pyannote"          # Faster diarization
+
+  sortformer:
+    batch_size: 4              # Process in batches
+    num_speakers: 2            # Fixed assumption
+    overlap_threshold: 0.7     # Only strong overlaps
+    speaker_embedding_dim: 256
+    confidence_threshold: 0.3
+
+  pyannote:
+    segmentation_threshold: 0.3  # Less strict
+    speaker_threshold: 0.5       # Lower threshold
+    min_duration_on: 1.0
+    min_duration_off: 2.0
+
+# POST-PROCESSING
+postprocessing:
+  correct_indic_errors: false  # Skip for speed
+  merge_short_silence: true
+  enforce_speaker_consistency: false
+  smooth_timing: false
+
+# EVALUATION EXPECTATIONS
+expected_metrics:
+  wer: 0.15                    # <15% word error
+  cer: 0.10                    # <10% character error
+  der: 0.08                    # <8% diarization error
+  speaker_attribution: 0.93    # >93% accuracy
+
+# RESOURCE REQUIREMENTS
+resources:
+  gpu_memory_gb: 2
+  cpu_cores: 1
+  estimated_time_multiplier: 1.0
+  max_concurrent_files: 4

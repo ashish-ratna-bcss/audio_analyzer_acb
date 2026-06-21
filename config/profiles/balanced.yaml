@@ -1,0 +1,68 @@
+# Balanced Profile
+# Good accuracy/speed tradeoff (~1.5x normal)
+# Use for typical case processing
+
+profile_name: "balanced"
+description: "Balanced accuracy and processing speed"
+processing_speed_multiplier: 1.5
+
+# TRANSCRIPTION
+transcription:
+  decoding:
+    beam_size: 10              # Moderate beam search
+    beam_threshold: 20.0
+    lm_weight: 1.0             # Balanced LM influence
+    ctc_weight: 0.3
+    confidence_threshold: 0.5  # Moderate confidence
+    max_active_states: 20000
+
+  preprocessing:
+    vad_threshold: 0.6         # Slightly higher (less sensitive)
+    sample_rate: 16000
+    normalization: true
+    mel_filter_banks: 80
+    normalize_audio: true
+
+  segmentation:
+    min_segment_duration: 1.0
+    max_segment_duration: 20
+    silence_threshold: 0.6
+    dynamic_boundaries: true
+
+# DIARIZATION
+diarization:
+  backend: "sortformer"        # Default: more accurate
+
+  sortformer:
+    batch_size: 2
+    num_speakers: null
+    overlap_threshold: 0.5     # Normal overlap detection
+    speaker_embedding_dim: 256
+    confidence_threshold: 0.5
+
+  pyannote:
+    segmentation_threshold: 0.5
+    speaker_threshold: 0.7
+    min_duration_on: 0.5
+    min_duration_off: 1.0
+
+# POST-PROCESSING
+postprocessing:
+  correct_indic_errors: true
+  merge_short_silence: true
+  enforce_speaker_consistency: true
+  smooth_timing: true
+
+# EVALUATION EXPECTATIONS
+expected_metrics:
+  wer: 0.12                    # <12% word error
+  cer: 0.08                    # <8% character error
+  der: 0.05                    # <5% diarization error
+  speaker_attribution: 0.96    # >96% accuracy
+
+# RESOURCE REQUIREMENTS
+resources:
+  gpu_memory_gb: 3
+  cpu_cores: 2
+  estimated_time_multiplier: 1.5
+  max_concurrent_files: 2

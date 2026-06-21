@@ -1,0 +1,69 @@
+# Production Quality Profile
+# Highest accuracy, slower processing (~3x normal)
+# Use when accuracy is critical (court proceedings, legal evidence)
+
+profile_name: "production_quality"
+description: "Maximum accuracy for forensic/legal use"
+processing_speed_multiplier: 3.0
+
+# TRANSCRIPTION (IndicConformer)
+transcription:
+  decoding:
+    beam_size: 50              # Large beam for exhaustive search
+    beam_threshold: 25.0       # Prune low-probability paths
+    lm_weight: 1.5             # Strong language model influence
+    ctc_weight: 0.3            # 30% CTC, 70% attention
+    confidence_threshold: 0.7  # High confidence requirement
+    max_active_states: 50000   # More states for accuracy
+
+  preprocessing:
+    vad_threshold: 0.5         # Moderate VAD sensitivity
+    sample_rate: 16000         # Standard for ASR
+    normalization: true        # Normalize loudness
+    mel_filter_banks: 80       # Standard spectrogram
+    normalize_audio: true
+
+  segmentation:
+    min_segment_duration: 0.5  # Keep short utterances
+    max_segment_duration: 20   # Long segments preserved
+    silence_threshold: 0.5     # Moderate silence detection
+    dynamic_boundaries: true   # Adapt to pauses
+
+# DIARIZATION
+diarization:
+  backend: "sortformer"        # More accurate diarization
+
+  sortformer:
+    batch_size: 1              # Process serially for accuracy
+    num_speakers: null         # Auto-detect speakers
+    overlap_threshold: 0.3     # Detect subtle overlaps
+    speaker_embedding_dim: 512 # Large embeddings
+    confidence_threshold: 0.6
+
+  # PyAnnote config (if fallback needed)
+  pyannote:
+    segmentation_threshold: 0.3
+    speaker_threshold: 0.7
+    min_duration_on: 0.5
+    min_duration_off: 1.0
+
+# POST-PROCESSING
+postprocessing:
+  correct_indic_errors: true  # Fix known Indic OCR issues
+  merge_short_silence: true   # Merge <0.5s silence gaps
+  enforce_speaker_consistency: true
+  smooth_timing: true         # Align timing boundaries
+
+# EVALUATION EXPECTATIONS
+expected_metrics:
+  wer: 0.10                    # <10% word error
+  cer: 0.05                    # <5% character error
+  der: 0.03                    # <3% diarization error
+  speaker_attribution: 0.98    # >98% accuracy
+
+# RESOURCE REQUIREMENTS
+resources:
+  gpu_memory_gb: 4
+  cpu_cores: 4
+  estimated_time_multiplier: 3.0
+  max_concurrent_files: 1

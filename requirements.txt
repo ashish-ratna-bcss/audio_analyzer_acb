@@ -25,3 +25,5 @@ speechbrain==1.1.0
 silero-vad==5.1
 sentence-transformers==3.0.1
 sentencepiece>=0.1.99
+jiwer==3.0.7
+pyyaml==6.0
