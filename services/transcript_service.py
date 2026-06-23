@@ -1,5 +1,6 @@
 import json
 
+import config
 from services import storage
 
 
@@ -124,7 +125,7 @@ def build_conversation_table(file_id, segments) -> dict:
     rows = []
     for s in sorted(segments, key=lambda x: x.start):
         txt = (getattr(s, "text", "") or "").strip()
-        if not txt:
+        if not txt or len(txt) < config.TABLE_MIN_CHARS:
             continue
         rows.append({
             "sl": len(rows) + 1,
