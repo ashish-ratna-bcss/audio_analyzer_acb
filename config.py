@@ -96,7 +96,7 @@ CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "false").lower(
 # 0.10 -> whole file; 0.30 -> 94s/69 segs; 0.50 -> 60s/50 segs (ground-truth
 # speech ~65s). 0.35 keeps recall while cutting noise-only regions.
 VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", "0.5"))
-VAD_MIN_SPEECH_MS = int(os.getenv("VAD_MIN_SPEECH_MS", "400"))  # drop short noise/overlap bursts; <400ms rarely intelligible
+VAD_MIN_SPEECH_MS = int(os.getenv("VAD_MIN_SPEECH_MS", "250"))  # 250ms: cuts pure noise bursts while keeping short words (~సార్ ≥300ms)
 VAD_SPEECH_PAD_MS_L3 = int(os.getenv("VAD_SPEECH_PAD_MS_L3", "250"))  # less bridging of separate utterances into one block
 VAD_MIN_SILENCE_MS_L3 = int(os.getenv("VAD_MIN_SILENCE_MS_L3", "200"))  # merge segments within 200ms (avoids word-level fragmentation)
 # Recall branches (enhanced / separated) in the L3 VAD union. The additive union
@@ -106,7 +106,7 @@ VAD_MIN_SILENCE_MS_L3 = int(os.getenv("VAD_MIN_SILENCE_MS_L3", "200"))  # merge 
 # detection on the ORIGINAL track only (precision over recall). Set to 1 to
 # restore the additive recall behaviour.
 VAD_INCLUDE_RECALL_BRANCHES = os.getenv("VAD_INCLUDE_RECALL_BRANCHES", "0") == "1"
-TABLE_MIN_CHARS = int(os.getenv("TABLE_MIN_CHARS", "5"))  # skip sub-5-char fragments from conversation table
+TABLE_MIN_CHARS = int(os.getenv("TABLE_MIN_CHARS", "3"))  # drop 1-2 char pure noise; Telugu short words (సార్=4) pass
 DFN_MODEL = "DeepFilterNet3"          # DeepFilterNet3 enhancement
 DEMUCS_MODEL = "htdemucs_ft"          # HTDemucs separation checkpoint
 

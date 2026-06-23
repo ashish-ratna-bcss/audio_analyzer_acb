@@ -47,7 +47,13 @@ def _build_result(session, job) -> dict:
     diarization speaker timeline, and the conversation table — all live from the
     persisted segments + diarization artifact."""
     case_id, file_id = job.case_id, job.file_id
-    segs = repo.list_segments(session, file_id)
+    all_segs = repo.list_segments(session, file_id)
+    # Reruns add new segments for the same file_id; deduplicate by (start, end)
+    # keeping the latest created_at (most recent run wins).
+    seen: dict[tuple, object] = {}
+    for seg in sorted(all_segs, key=lambda s: s.created_at):
+        seen[(round(seg.start, 3), round(seg.end, 3))] = seg
+    segs = sorted(seen.values(), key=lambda s: s.start)
     f = repo.get_file(session, file_id)
     src_hash = f.source_sha256 if f else None
 
