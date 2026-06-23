@@ -26,3 +26,6 @@ sentence-transformers==3.0.1
 sentencepiece>=0.1.99
 jiwer==3.0.5
 pyyaml==6.0
+# L6b LLM enhancement (optional). Default provider "ollama" uses stdlib urllib —
+# no package needed. Uncomment for the "anthropic" provider:
+# anthropic==0.39.0

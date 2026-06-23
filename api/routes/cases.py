@@ -72,6 +72,12 @@ def _build_result(session, job) -> dict:
         "transcript": transcript,        # segments: start/end/speaker/text/language/confidence
         "diarization": diar,             # speakers + speaker timeline + model_version
         "conversation_table": table,     # court-ready Time/Person/Conversation rows
+        # L6b enhancement layer (additive). raw = raw IndicConformer ASR;
+        # enhanced = LLM-corrected (falls back to raw when L6b did not run/failed).
+        "raw": ts.build_raw(file_id, segs),
+        "raw_diarization": ts.enrich_diarization(diar, segs, use_enhanced=False),
+        "enhanced": ts.build_enhanced(file_id, segs),
+        "enhanced_diarization": ts.enrich_diarization(diar, segs, use_enhanced=True),
     }
 
 

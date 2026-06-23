@@ -145,6 +145,78 @@ def render_conversation_markdown(table: dict) -> str:
     return "\n".join(lines)
 
 
+def _raw_text(segment) -> str:
+    """Raw IndicConformer ASR for a segment, independent of any later mutation."""
+    return ((segment.candidates or {}).get("indic_conformer") or {}).get("text", "") or ""
+
+
+def _enhanced_text(segment) -> str:
+    """LLM-corrected text if a correction was applied, else the raw ASR text.
+    Always defined — falls back to raw when L6b did not run / failed / rejected."""
+    llm = (segment.candidates or {}).get("llm_enhancement") or {}
+    if llm.get("correction_status") == "corrected":
+        return llm.get("corrected_text") or _raw_text(segment)
+    return _raw_text(segment)
+
+
+def build_raw(file_id, segments) -> list:
+    """Full raw IndicConformer transcription, per segment (reads candidates,
+    never seg.text). Independent of the LLM enhancement layer."""
+    out = []
+    for s in sorted(segments, key=lambda x: x.start):
+        out.append({
+            "segment_id": s.id, "speaker": s.speaker,
+            "start": s.start, "end": s.end,
+            "text": _raw_text(s),
+            "language": s.detected_language, "confidence": s.confidence,
+        })
+    return out
+
+
+def build_enhanced(file_id, segments) -> list:
+    """LLM-corrected transcription, per segment. `text` falls back to the raw
+    ASR text whenever enhancement did not apply; `correction_status` explains."""
+    out = []
+    for s in sorted(segments, key=lambda x: x.start):
+        llm = (s.candidates or {}).get("llm_enhancement") or {}
+        out.append({
+            "segment_id": s.id, "speaker": s.speaker,
+            "start": s.start, "end": s.end,
+            "text": _enhanced_text(s),
+            "language": s.detected_language, "confidence": s.confidence,
+            "correction_status": llm.get("correction_status", "not_run"),
+            "correction_confidence": llm.get("correction_confidence"),
+        })
+    return out
+
+
+def enrich_diarization(diar: dict, segments, *, use_enhanced: bool) -> dict:
+    """Join the pyannote speaker timeline with per-turn text (raw or enhanced),
+    matching each turn to the segment with the greatest time overlap. Speakers,
+    timestamps and model_version are passed through unchanged."""
+    seg_list = sorted(segments, key=lambda x: x.start)
+
+    def _text_for(start, end):
+        best, best_overlap = None, 0.0
+        for s in seg_list:
+            overlap = min(s.end, end) - max(s.start, start)
+            if overlap > best_overlap:
+                best_overlap, best = overlap, s
+        if best is None or best_overlap <= 0.0:
+            return ""
+        return _enhanced_text(best) if use_enhanced else _raw_text(best)
+
+    timeline = []
+    for turn in (diar.get("timeline") or []):
+        timeline.append({**turn, "text": _text_for(turn["start"], turn["end"])})
+
+    return {
+        "speakers": diar.get("speakers", []),
+        "model_version": diar.get("model_version"),
+        "timeline": timeline,
+    }
+
+
 def write_named(case_id, file_id, name, data) -> str:
     path = storage.derivative_path(case_id, file_id, "final", f"{file_id}_{name}.json")
     with open(path, "w") as f:

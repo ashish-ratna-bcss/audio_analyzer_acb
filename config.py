@@ -206,3 +206,30 @@ INDIC_CONF_MIN = float(os.getenv("INDIC_CONF_MIN", "0.5"))
 # words into the record. Distinct from INDIC_SELFCHECK_MIN, which only flags.
 # Conservative default keeps borderline-real low-agreement speech.
 INDIC_SUPPRESS_BELOW = float(os.getenv("INDIC_SUPPRESS_BELOW", "0.1"))
+
+# --- Phase: LLM transcript enhancement layer (L6b) ---
+# Additive ASR character/spelling correction. Writes ONLY to
+# candidates["llm_enhancement"]; never mutates seg.text, timestamps, speakers,
+# or any existing response. Default DISABLED so existing behavior is the default
+# on laptop/tests and any deploy that does not opt in.
+LLM_ENHANCEMENT_ENABLED = os.getenv("LLM_ENHANCEMENT_ENABLED", "false").lower() == "true"
+# Provider: "ollama" (local, air-gappable; stdlib urllib) or "anthropic" (lazy import).
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
+# Deployed Ollama server + model (qwen2.5 14B instruct, q4_K_M quant).
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:14b-instruct-q4_K_M")
+LLM_OLLAMA_URL = os.getenv("LLM_OLLAMA_URL", "http://32.192.131.130:11434")
+LLM_ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+# Min ASR confidence for a segment to be sent to the LLM at all (0.0 = attempt all).
+LLM_ENHANCEMENT_MIN_CONF = float(os.getenv("LLM_ENHANCEMENT_MIN_CONF", "0.0"))
+# Min LLM-reported correction_confidence for a correction to actually be applied;
+# below this the correction is dropped and the raw text is kept (unchanged).
+LLM_CORRECTION_MIN_CONF = float(os.getenv("LLM_CORRECTION_MIN_CONF", "0.85"))
+# Deterministic guard: reject a correction whose word count deviates from the
+# original by more than this ratio (catches add/remove/rewrite the prompt missed).
+LLM_MAX_WORD_DELTA_RATIO = float(os.getenv("LLM_MAX_WORD_DELTA_RATIO", "0.15"))
+# Per-segment LLM call timeout (seconds). Empty / "none" / "0" = no timeout
+# (block until the model responds), matching the deployed OLLAMA_TIMEOUT=None.
+_llm_timeout_raw = os.getenv("LLM_ENHANCEMENT_TIMEOUT_S", "").strip().lower()
+LLM_ENHANCEMENT_TIMEOUT_S = (
+    None if _llm_timeout_raw in ("", "none", "0") else int(_llm_timeout_raw)
+)

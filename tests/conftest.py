@@ -31,7 +31,7 @@ _NO_STUB_MODULES = {
     "test_recall_wrappers_import", "test_phase4_wrappers_import",
     "test_indic_abstain", "test_hallucination_filter", "test_lang_vote",
     "test_preprocess_service", "test_transcript_outputs", "test_sortformer_service",
-    "test_sortformer_client",
+    "test_sortformer_client", "test_llm_enhancement_service",
 }
 
 
@@ -68,6 +68,20 @@ def _stub_models(monkeypatch, request):
             lambda p, lang=None: {"text": "stub", "confidence": None, "language": lang,
                                   "model": "stub", "abstained": False}, raising=False)
         monkeypatch.setattr(embedding_service, "similarity", lambda a, b: 0.95, raising=False)
+    except Exception:
+        pass
+
+    # L6b LLM enhancement: no model/network on the build box. Default stub leaves
+    # the transcript unchanged so pipeline-driving tests are offline and the
+    # `enhanced` output mirrors `raw`.
+    try:
+        from services import llm_enhancement_service
+        monkeypatch.setattr(
+            llm_enhancement_service, "enhance_segment",
+            lambda seg: {"correction_status": "not_run", "correction_confidence": 1.0,
+                         "original_text": seg.get("text", ""),
+                         "corrected_text": seg.get("text", ""), "changes": []},
+            raising=False)
     except Exception:
         pass
     yield

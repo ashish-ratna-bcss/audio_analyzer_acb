@@ -16,6 +16,7 @@ from services import preprocess_service, hallucination_filter
 from services import (diarization_service, indic_asr_service,
                       embedding_service, clip_service, lang_id_service)
 from services import cross_model
+from services import llm_enhancement_service
 from services import transcript_service as ts
 from services import webhook_service
 from services.hashing import sha256_file
@@ -26,7 +27,7 @@ from services.ffmpeg_service import convert_dual_rate, UnsupportedFormatError
 # an integration can render a progress bar without knowing the stage internals.
 STAGE_PROGRESS = {
     "L0": 5, "L1": 15, "L2": 30, "L2b": 35, "L3": 45,
-    "L4": 55, "L5": 75, "L6": 85, "L8": 95,
+    "L4": 55, "L5": 75, "L6": 85, "L6b": 90, "L8": 95,
     "completed": 100, "failed": 100, "quarantined": 100,
 }
 
@@ -502,6 +503,34 @@ def _write_confidence_report(job, per_segment, flagged_count, session):
     session.commit()
 
 
+def _l6b_enhance(job, session):
+    """L6b — additive multilingual LLM correction. Stores a correction record on
+    each segment's candidates["llm_enhancement"]; NEVER mutates seg.text,
+    timestamps, speakers, or boundaries. The service never raises, so a disabled
+    or unavailable LLM leaves every segment as raw ASR (correction_status
+    explains why) and the pipeline proceeds exactly as before this layer."""
+    segs = repo.list_segments(session, job.file_id)
+    corrected = 0
+    for seg in segs:
+        rec = llm_enhancement_service.enhance_segment({
+            "segment_id": seg.id, "speaker": seg.speaker,
+            "start": seg.start, "end": seg.end,
+            "text": seg.text, "language": seg.detected_language,
+            "confidence": seg.confidence, "overlap": "+" in (seg.speaker or ""),
+        })
+        cands = dict(seg.candidates or {})
+        cands["llm_enhancement"] = rec
+        seg.candidates = cands
+        if rec["correction_status"] == "corrected":
+            corrected += 1
+    session.commit()
+    au.append_entry(job.case_id, file_id=job.file_id, stage="L6b",
+                    parameters={"corrected": corrected, "total": len(segs)},
+                    session=session)
+    session.commit()
+    return corrected
+
+
 @celery.task(name="pipeline.run_pipeline")
 def run_pipeline(job_id: str) -> str:
     with get_session() as s:
@@ -581,6 +610,8 @@ def run_pipeline(job_id: str) -> str:
             per_segment, flagged = _l5_l6_segments(job, union, turns, enh, in16, s)
             repo.update_job(s, job_id, stage="L6"); s.commit(); stage("L6")
             _write_confidence_report(job, per_segment, flagged, s)
+            repo.update_job(s, job_id, stage="L6b"); s.commit(); stage("L6b")
+            _l6b_enhance(job, s)
     except Exception as e:
         with get_session() as s:
             repo.update_job(s, job_id, status=JobStatus.FAILED, error=str(e))
