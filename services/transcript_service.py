@@ -186,6 +186,7 @@ def build_enhanced(file_id, segments) -> list:
             "language": s.detected_language, "confidence": s.confidence,
             "correction_status": llm.get("correction_status", "not_run"),
             "correction_confidence": llm.get("correction_confidence"),
+            "original_text": llm.get("original_text"),
         })
     return out
 
