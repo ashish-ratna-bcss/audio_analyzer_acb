@@ -519,15 +519,22 @@ def _l6b_enhance(job, session):
     if not segs:
         return 0
 
-    # Build full transcript context once — shared read-only across all threads.
-    # Raw ASR text gives the LLM topic/domain/proper-noun signal so it can
-    # reconstruct fragments consistently with the rest of the conversation.
+    # Build per-segment context windows — shared read-only across all threads.
+    # Send ±WINDOW neighbouring segments (by time order) so the LLM can see
+    # surrounding speech for proper-noun / domain signal without flooding the
+    # context window. Full transcript at ~70 segs hits the 4096-token limit.
+    _CTX_WINDOW = 15  # segments before + after the current one
     sorted_segs = sorted(segs, key=lambda x: x.start)
-    transcript_context = "\n".join(
-        f"[{s.start:.1f}s]: {s.text}"
-        for s in sorted_segs
-        if (s.text or "").strip()
-    )
+    _idx = {seg.id: i for i, seg in enumerate(sorted_segs)}
+
+    def _window_context(seg_id: str) -> str:
+        i = _idx.get(seg_id, 0)
+        lo, hi = max(0, i - _CTX_WINDOW), min(len(sorted_segs), i + _CTX_WINDOW + 1)
+        return "\n".join(
+            f"[{s.start:.1f}s]: {s.text}"
+            for s in sorted_segs[lo:hi]
+            if (s.text or "").strip()
+        )
 
     # Serialise ORM objects to plain dicts before handing to threads —
     # SQLAlchemy sessions are not thread-safe.
@@ -537,7 +544,7 @@ def _l6b_enhance(job, session):
             "start": seg.start, "end": seg.end,
             "text": seg.text, "language": seg.detected_language,
             "confidence": seg.confidence, "overlap": "+" in (seg.speaker or ""),
-            "transcript_context": transcript_context,
+            "transcript_context": _window_context(seg.id),
         }
         for seg in segs
     ]
