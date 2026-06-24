@@ -167,7 +167,7 @@ def _ollama_generate(url: str, model: str, segment: dict) -> dict:
         "prompt": _build_user_prompt(segment),
         "format": "json",
         "stream": False,
-        "options": {"temperature": 0.0, "num_ctx": 8192},
+        "options": {"temperature": 0.0},
     }).encode("utf-8")
     req = urllib.request.Request(
         f"{url.rstrip('/')}/api/generate",
