@@ -75,48 +75,55 @@ def _passes_guards(original: str, corrected: str, segment: dict) -> bool:
         if run not in corrected:
             return False
 
-    # Word-count guard: a correction fixes characters, it does not add/remove
-    # words. Short segments (≤2 words) and overlapping speech get strictest bar
-    # (zero change allowed) — single-word segments have no statistical room for
-    # the ratio heuristic and showed hallucination in testing (హట్→హేలో etc).
+    # Word-count guard: allow at most ±1 word absolute delta so fragment merges
+    # (2 ASR fragments → 1 real word) and word completions pass, while multi-word
+    # rewrites are blocked. Overlapping speech stays at 0 (no word change at all —
+    # cross-talk segments are too ambiguous for reconstruction). The confidence
+    # threshold (0.92) is the primary hallucination defence; this is the backstop.
     o_words = original.split()
     c_words = corrected.split()
-    is_short = len(o_words) <= 2
-    max_ratio = 0.0 if (segment.get("overlap") or is_short) else config.LLM_MAX_WORD_DELTA_RATIO
-    denom = max(len(o_words), 1)
-    if abs(len(c_words) - len(o_words)) / denom > max_ratio:
-        return False
+    if segment.get("overlap"):
+        if len(c_words) != len(o_words):
+            return False
+    else:
+        if abs(len(c_words) - len(o_words)) > 1:
+            return False
 
     return True
 
 
 _SYSTEM_PROMPT = """You are a forensic transcript corrector for multilingual Indian-language audio evidence (Telugu, Hindi, English, Tamil, Kannada, Malayalam, Marathi, Bengali, Punjabi, Gujarati, Odia, Assamese, Urdu, Sanskrit, and any code-mixed combination).
 
-Your ONLY task: correct obvious ASR (speech recognition) character-level mistakes. Return JSON only.
+Your task: repair ASR output so every token is a real, meaningful word in the detected language. Return JSON only.
 
 YOU MAY correct:
-- Missing or incorrect characters within a word
-- Broken words (a word the ASR split mid-character)
-- Common phonetic substitutions
+- Missing or incorrect characters within a word (e.g. duplicate vowel matras, missing halant)
+- Broken words that ASR split mid-character — rejoin them into the correct single word
+- Incomplete word fragments: complete them to the phonetically closest real word in that language
+- Common phonetic substitutions that produce a known word
 - Wrong Unicode character / script-level recognition errors within the same language
+- Two adjacent ASR fragments that together form one word — merge them
 
 YOU MUST NEVER:
-- Add words or remove words
 - Translate to another language or change the script
-- Paraphrase, rewrite, summarize, or expand
+- Paraphrase, rewrite, summarize, or expand meaning
 - Change numbers (phone, Aadhaar, PAN, account, currency, dates, times)
 - Change speaker labels, timestamps, or segment boundaries
-- Invent names, locations, organizations, events, or any context
-- Generate missing content — if a word is unclear, keep it unchanged
+- Invent names, locations, organizations, events, or factual context not implied by the phonetics
+- Replace a word that is already a valid word in that language with a different word
+- Generate entirely new content when the segment is pure noise with no phonetic signal
 
 RULES:
+- Goal: every token in corrected_text must be a real word (or recognised proper noun / code-mix English) in the detected language.
+- A single-syllable fragment like "మ", "ని", "క" standing alone is likely an ASR partial — complete it ONLY if you are highly confident of the full word from phonetic context; otherwise leave unchanged.
 - Preserve the original language and any code-mixing exactly (e.g. Telugu + English stays Telugu + English).
 - If overlap is true, be EXTREMELY conservative: only fix unambiguous single-character spelling errors.
-- If you are not highly certain a token is an ASR error, leave it unchanged.
+- Word count may change by ±1 if two ASR fragments should be one word or one fragment expands to a real word — but never add entirely new words.
+- If you are not highly certain, leave the token unchanged. Do not guess.
 - If nothing needs correcting, return correction_status "unchanged" with corrected_text equal to the original.
 
 Return ONLY this JSON object, no prose:
-{"correction_status":"corrected"|"unchanged","correction_confidence":<0.0-1.0>,"original_text":"<input>","corrected_text":"<output>","changes":[{"original":"<word>","corrected":"<word>","type":"spelling"|"asr_error"|"script"}]}"""
+{"correction_status":"corrected"|"unchanged","correction_confidence":<0.0-1.0>,"original_text":"<input>","corrected_text":"<output>","changes":[{"original":"<token>","corrected":"<token>","type":"spelling"|"asr_error"|"script"|"word_completion"|"fragment_merge"}]}"""
 
 
 def _build_user_prompt(segment: dict) -> str:
