@@ -76,10 +76,13 @@ def _passes_guards(original: str, corrected: str, segment: dict) -> bool:
             return False
 
     # Word-count guard: a correction fixes characters, it does not add/remove
-    # words. Overlapping speech is held to the strictest bar (no count change).
+    # words. Short segments (≤2 words) and overlapping speech get strictest bar
+    # (zero change allowed) — single-word segments have no statistical room for
+    # the ratio heuristic and showed hallucination in testing (హట్→హేలో etc).
     o_words = original.split()
     c_words = corrected.split()
-    max_ratio = 0.0 if segment.get("overlap") else config.LLM_MAX_WORD_DELTA_RATIO
+    is_short = len(o_words) <= 2
+    max_ratio = 0.0 if (segment.get("overlap") or is_short) else config.LLM_MAX_WORD_DELTA_RATIO
     denom = max(len(o_words), 1)
     if abs(len(c_words) - len(o_words)) / denom > max_ratio:
         return False

@@ -228,7 +228,7 @@ LLM_ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 LLM_ENHANCEMENT_MIN_CONF = float(os.getenv("LLM_ENHANCEMENT_MIN_CONF", "0.0"))
 # Min LLM-reported correction_confidence for a correction to actually be applied;
 # below this the correction is dropped and the raw text is kept (unchanged).
-LLM_CORRECTION_MIN_CONF = float(os.getenv("LLM_CORRECTION_MIN_CONF", "0.85"))
+LLM_CORRECTION_MIN_CONF = float(os.getenv("LLM_CORRECTION_MIN_CONF", "0.92"))
 # Deterministic guard: reject a correction whose word count deviates from the
 # original by more than this ratio (catches add/remove/rewrite the prompt missed).
 LLM_MAX_WORD_DELTA_RATIO = float(os.getenv("LLM_MAX_WORD_DELTA_RATIO", "0.15"))
