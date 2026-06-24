@@ -203,3 +203,51 @@ def test_parse_llm_json_tolerates_wrapping_text():
     raw = 'Here is the result:\n{"correction_status":"unchanged","corrected_text":"x"}\nDone.'
     parsed = llm._parse_llm_json(raw)
     assert parsed["correction_status"] == "unchanged"
+
+
+# --- primary -> fallback Ollama routing -----------------------------------
+
+def test_ollama_uses_primary_when_ok(monkeypatch):
+    monkeypatch.setattr(config, "LLM_OLLAMA_URL", "http://primary:11434")
+    monkeypatch.setattr(config, "LLM_MODEL", "m14b")
+    calls = []
+
+    def _gen(url, model, seg):
+        calls.append((url, model))
+        return {"correction_status": "unchanged", "corrected_text": seg["text"]}
+
+    monkeypatch.setattr(llm, "_ollama_generate", _gen)
+    llm._call_ollama(_seg(text="x"))
+    assert calls == [("http://primary:11434", "m14b")]
+
+
+def test_ollama_falls_back_on_primary_failure(monkeypatch):
+    monkeypatch.setattr(config, "LLM_OLLAMA_URL", "http://primary:11434")
+    monkeypatch.setattr(config, "LLM_MODEL", "m14b")
+    monkeypatch.setattr(config, "LLM_OLLAMA_FALLBACK_URL", "http://fallback:11434")
+    monkeypatch.setattr(config, "LLM_FALLBACK_MODEL", "m7b")
+    calls = []
+
+    def _gen(url, model, seg):
+        calls.append((url, model))
+        if url == "http://primary:11434":
+            raise ConnectionError("primary down")
+        return {"correction_status": "unchanged", "corrected_text": seg["text"]}
+
+    monkeypatch.setattr(llm, "_ollama_generate", _gen)
+    llm._call_ollama(_seg(text="x"))
+    assert calls == [("http://primary:11434", "m14b"), ("http://fallback:11434", "m7b")]
+
+
+def test_ollama_both_fail_raises_to_error_status(monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr(config, "LLM_OLLAMA_FALLBACK_URL", "http://fallback:11434")
+    monkeypatch.setattr(config, "LLM_FALLBACK_MODEL", "m7b")
+
+    def _gen(url, model, seg):
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(llm, "_ollama_generate", _gen)
+    out = llm.enhance_segment(_seg(text="hello world"))
+    assert out["correction_status"] == "error"
+    assert out["corrected_text"] == "hello world"

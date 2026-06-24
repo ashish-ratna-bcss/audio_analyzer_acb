@@ -137,12 +137,12 @@ def _parse_llm_json(raw: str) -> dict:
         raise
 
 
-def _call_ollama(segment: dict) -> dict:
-    """Local Ollama via stdlib urllib — no third-party dependency on the build box."""
+def _ollama_generate(url: str, model: str, segment: dict) -> dict:
+    """One Ollama /api/generate call via stdlib urllib — no third-party dep."""
     import urllib.request
 
     body = json.dumps({
-        "model": config.LLM_MODEL,
+        "model": model,
         "system": _SYSTEM_PROMPT,
         "prompt": _build_user_prompt(segment),
         "format": "json",
@@ -150,11 +150,27 @@ def _call_ollama(segment: dict) -> dict:
         "options": {"temperature": 0.0},
     }).encode("utf-8")
     req = urllib.request.Request(
-        f"{config.LLM_OLLAMA_URL}/api/generate",
+        f"{url.rstrip('/')}/api/generate",
         data=body, headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=config.LLM_ENHANCEMENT_TIMEOUT_S) as resp:
         payload = json.loads(resp.read().decode("utf-8"))
     return _parse_llm_json(payload.get("response", ""))
+
+
+def _call_ollama(segment: dict) -> dict:
+    """Primary Ollama; on any failure fall back to the configured fallback
+    server/model so a down local 14B does not disable the layer. Raises only if
+    both primary and fallback fail (caller maps that to correction_status=error)."""
+    try:
+        return _ollama_generate(config.LLM_OLLAMA_URL, config.LLM_MODEL, segment)
+    except Exception as primary_exc:
+        fb_url = getattr(config, "LLM_OLLAMA_FALLBACK_URL", "")
+        fb_model = getattr(config, "LLM_FALLBACK_MODEL", "")
+        if not fb_url or not fb_model:
+            raise
+        logger.warning("primary Ollama failed (%s); trying fallback %s/%s: %s",
+                       config.LLM_OLLAMA_URL, fb_url, fb_model, primary_exc)
+        return _ollama_generate(fb_url, fb_model, segment)
 
 
 def _call_anthropic(segment: dict) -> dict:

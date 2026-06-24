@@ -215,9 +215,14 @@ INDIC_SUPPRESS_BELOW = float(os.getenv("INDIC_SUPPRESS_BELOW", "0.1"))
 LLM_ENHANCEMENT_ENABLED = os.getenv("LLM_ENHANCEMENT_ENABLED", "false").lower() == "true"
 # Provider: "ollama" (local, air-gappable; stdlib urllib) or "anthropic" (lazy import).
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
-# Deployed Ollama server + model (qwen2.5 14B instruct, q4_K_M quant).
+# Primary Ollama server + model (local box, qwen2.5 14B instruct, q4_K_M quant).
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:14b-instruct-q4_K_M")
-LLM_OLLAMA_URL = os.getenv("LLM_OLLAMA_URL", "http://32.192.131.130:11434")
+LLM_OLLAMA_URL = os.getenv("LLM_OLLAMA_URL", "http://localhost:11434")
+# Fallback Ollama server + model, used when the primary URL/model is unreachable
+# or errors (keeps the layer working if the local 14B is down). Empty URL = no
+# fallback. Defaults to the shared remote box with the 7B instruct model.
+LLM_OLLAMA_FALLBACK_URL = os.getenv("LLM_OLLAMA_FALLBACK_URL", "http://32.192.131.130:11434")
+LLM_FALLBACK_MODEL = os.getenv("LLM_FALLBACK_MODEL", "qwen2.5:7b-instruct-q4_K_M")
 LLM_ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 # Min ASR confidence for a segment to be sent to the LLM at all (0.0 = attempt all).
 LLM_ENHANCEMENT_MIN_CONF = float(os.getenv("LLM_ENHANCEMENT_MIN_CONF", "0.0"))
