@@ -519,6 +519,16 @@ def _l6b_enhance(job, session):
     if not segs:
         return 0
 
+    # Build full transcript context once — shared read-only across all threads.
+    # Raw ASR text gives the LLM topic/domain/proper-noun signal so it can
+    # reconstruct fragments consistently with the rest of the conversation.
+    sorted_segs = sorted(segs, key=lambda x: x.start)
+    transcript_context = "\n".join(
+        f"[{s.start:.1f}s]: {s.text}"
+        for s in sorted_segs
+        if (s.text or "").strip()
+    )
+
     # Serialise ORM objects to plain dicts before handing to threads —
     # SQLAlchemy sessions are not thread-safe.
     seg_inputs = [
@@ -527,6 +537,7 @@ def _l6b_enhance(job, session):
             "start": seg.start, "end": seg.end,
             "text": seg.text, "language": seg.detected_language,
             "confidence": seg.confidence, "overlap": "+" in (seg.speaker or ""),
+            "transcript_context": transcript_context,
         }
         for seg in segs
     ]

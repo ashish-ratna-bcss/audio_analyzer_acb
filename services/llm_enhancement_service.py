@@ -122,17 +122,27 @@ RULES:
 - If you are not highly certain, leave the token unchanged. Do not guess.
 - If nothing needs correcting, return correction_status "unchanged" with corrected_text equal to the original.
 
+USING TRANSCRIPT CONTEXT:
+- The user message includes the full raw transcript of the recording as `transcript_context`.
+- Use it to identify proper nouns, recurring words, speaker names, domain vocabulary, and the topic of the conversation.
+- If a fragment in the current segment resembles a word that appears clearly elsewhere in the transcript, reconstruct it to that word.
+- Never copy whole phrases from other segments into the current segment — only use context to guide word-level reconstruction.
+
 Return ONLY this JSON object, no prose:
 {"correction_status":"corrected"|"unchanged","correction_confidence":<0.0-1.0>,"original_text":"<input>","corrected_text":"<output>","changes":[{"original":"<token>","corrected":"<token>","type":"spelling"|"asr_error"|"script"|"word_completion"|"fragment_merge"}]}"""
 
 
 def _build_user_prompt(segment: dict) -> str:
-    return json.dumps({
+    payload = {
         "text": segment.get("text", ""),
         "language": segment.get("language"),
         "overlap": bool(segment.get("overlap")),
         "confidence": segment.get("confidence"),
-    }, ensure_ascii=False)
+    }
+    ctx = segment.get("transcript_context", "")
+    if ctx:
+        payload["transcript_context"] = ctx
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _parse_llm_json(raw: str) -> dict:
