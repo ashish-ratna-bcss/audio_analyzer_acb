@@ -232,6 +232,12 @@ LLM_CORRECTION_MIN_CONF = float(os.getenv("LLM_CORRECTION_MIN_CONF", "0.92"))
 # Deterministic guard: reject a correction whose word count deviates from the
 # original by more than this ratio (catches add/remove/rewrite the prompt missed).
 LLM_MAX_WORD_DELTA_RATIO = float(os.getenv("LLM_MAX_WORD_DELTA_RATIO", "0.15"))
+# Parallel Ollama workers for L6b. ASR is done by the time L6b runs, so the
+# GPU is free. Match this to OLLAMA_NUM_PARALLEL on the Ollama server so it
+# actually batches requests instead of queuing them. 4 fits comfortably in
+# 24GB VRAM with qwen2.5:14b-instruct-q4_K_M (~8-9GB per model instance).
+LLM_MAX_WORKERS = int(os.getenv("LLM_MAX_WORKERS", "4"))
+
 # Per-segment LLM call timeout (seconds). Empty / "none" / "0" = no timeout
 # (block until the model responds), matching the deployed OLLAMA_TIMEOUT=None.
 _llm_timeout_raw = os.getenv("LLM_ENHANCEMENT_TIMEOUT_S", "").strip().lower()

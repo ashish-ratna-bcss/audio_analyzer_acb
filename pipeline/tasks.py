@@ -1,5 +1,6 @@
 import os
 import json
+import concurrent.futures
 
 import config
 from pipeline.celery_app import celery
@@ -508,21 +509,43 @@ def _l6b_enhance(job, session):
     each segment's candidates["llm_enhancement"]; NEVER mutates seg.text,
     timestamps, speakers, or boundaries. The service never raises, so a disabled
     or unavailable LLM leaves every segment as raw ASR (correction_status
-    explains why) and the pipeline proceeds exactly as before this layer."""
+    explains why) and the pipeline proceeds exactly as before this layer.
+
+    Calls are parallelised via ThreadPoolExecutor (pure HTTP, no DB in threads).
+    The session is only touched before (read) and after (write) the parallel block.
+    LLM_MAX_WORKERS controls concurrency; set OLLAMA_NUM_PARALLEL to the same
+    value on the Ollama server so it actually batches requests in parallel."""
     segs = repo.list_segments(session, job.file_id)
-    corrected = 0
-    for seg in segs:
-        rec = llm_enhancement_service.enhance_segment({
+    if not segs:
+        return 0
+
+    # Serialise ORM objects to plain dicts before handing to threads —
+    # SQLAlchemy sessions are not thread-safe.
+    seg_inputs = [
+        {
             "segment_id": seg.id, "speaker": seg.speaker,
             "start": seg.start, "end": seg.end,
             "text": seg.text, "language": seg.detected_language,
             "confidence": seg.confidence, "overlap": "+" in (seg.speaker or ""),
-        })
+        }
+        for seg in segs
+    ]
+
+    # Fan-out: all Ollama HTTP calls in parallel; results ordered by input.
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=config.LLM_MAX_WORKERS) as pool:
+        results = list(pool.map(
+            llm_enhancement_service.enhance_segment, seg_inputs))
+
+    # Fan-in: write enhancement records back to DB sequentially.
+    corrected = 0
+    for seg, rec in zip(segs, results):
         cands = dict(seg.candidates or {})
         cands["llm_enhancement"] = rec
         seg.candidates = cands
         if rec["correction_status"] == "corrected":
             corrected += 1
+
     session.commit()
     au.append_entry(job.case_id, file_id=job.file_id, stage="L6b",
                     parameters={"corrected": corrected, "total": len(segs)},
