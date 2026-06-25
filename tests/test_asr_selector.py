@@ -92,6 +92,55 @@ def test_whisper_high_no_speech_falls_back_to_indic():
     assert r["reason"] == "whisper_unusable"
 
 
+def test_telugu_ft_wins_pure_native():
+    """Pure-native turn with a fine-tuned engine result -> Telugu-FT wins,
+    cross-checked against IndicConformer (agree -> no flag)."""
+    r = asr_selector.select(
+        indic_text="అందుబాటులో ఉన్నారు", indic_source="indic_enhanced",
+        indic_agreement=0.9, indic_abstained=False,
+        whisper_text="అందుబాటులో ఉన్నారా", whisper_confidence=0.6,
+        whisper_no_speech=0.1, telugu_text="అందుబాటులో ఉన్నారు", telugu_confidence=None,
+        embed_fn=_embed(0.9), agreement_min=0.6)
+    assert r["source"] == "telugu_whisper"
+    assert r["reason"] == "telugu_ft"
+    assert r["text"] == "అందుబాటులో ఉన్నారు"
+    assert r["flag"] is None
+
+
+def test_telugu_ft_disagree_with_indic_flags():
+    r = asr_selector.select(
+        indic_text="వేరే మాట పూర్తిగా", indic_source="indic_enhanced",
+        indic_agreement=0.9, indic_abstained=False,
+        whisper_text="ఇంకేదో మాట", whisper_confidence=0.6,
+        whisper_no_speech=0.1, telugu_text="అందుబాటులో ఉన్నారు", telugu_confidence=None,
+        embed_fn=_embed(0.2), agreement_min=0.6)
+    assert r["source"] == "telugu_whisper"
+    assert r["flag"] == "asr_engine_disagreement"
+
+
+def test_code_mix_beats_telugu_ft():
+    """Even with a Telugu-FT result, Latin/digits in generic Whisper win."""
+    r = asr_selector.select(
+        indic_text="పదకొండు వందల", indic_source="indic_enhanced",
+        indic_agreement=0.9, indic_abstained=False,
+        whisper_text="1100 rupees", whisper_confidence=0.8,
+        whisper_no_speech=0.0, telugu_text="పదకొండు వందల", telugu_confidence=None,
+        embed_fn=_embed(0.9))
+    assert r["source"] == "whisper"
+    assert r["reason"] == "code_mix_or_numbers"
+
+
+def test_telugu_ft_only_when_indic_abstains():
+    r = asr_selector.select(
+        indic_text="", indic_source="none",
+        indic_agreement=0.0, indic_abstained=True,
+        whisper_text="", whisper_confidence=None,
+        whisper_no_speech=None, telugu_text="అందుబాటులో ఉన్నారు", telugu_confidence=None,
+        embed_fn=_embed(0.0))
+    assert r["source"] == "telugu_whisper"
+    assert r["reason"] == "telugu_ft_only"
+
+
 def test_embed_failure_treated_as_disagreement():
     def _boom(a, b):
         raise RuntimeError("embed down")

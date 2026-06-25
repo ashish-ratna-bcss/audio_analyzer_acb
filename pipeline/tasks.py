@@ -15,7 +15,7 @@ from services import vad_union
 from services import preprocess_service, hallucination_filter
 from services import (diarization_service, indic_asr_service,
                       embedding_service, clip_service, lang_id_service)
-from services import cross_model, whisper_service, asr_selector
+from services import cross_model, whisper_service, asr_selector, telugu_asr_service
 from services import transcript_service as ts
 from services import webhook_service
 from services.hashing import sha256_file
@@ -290,7 +290,7 @@ def _build_units(turns, vad_union, same_speaker_gap_s=None, min_dur_s=0.3):
     return units
 
 
-def run_asr(clean_clip, raw_clip, *, file_prior, whisper_turn=None):
+def run_asr(clean_clip, raw_clip, *, file_prior, whisper_turn=None, telugu_turn=None):
     """Dual-engine ASR — IndicConformer (per-clip) + Whisper-large-v3 (whole-file,
     sliced per turn) — with output-content selection.
 
@@ -356,19 +356,38 @@ def run_asr(clean_clip, raw_clip, *, file_prior, whisper_turn=None):
         if wf.get("hallucination"):
             hallucination = hallucination or wf.get("hallucination")
 
-    if whisper and whisper["text"]:
+    # Third engine: fine-tuned Telugu Whisper turn-text (whole-file, sliced),
+    # ghost-filtered the same way. Only present for ASR_FT_LANGS files.
+    telugu = None
+    if config.ASR_TELUGU_ENGINE and telugu_turn and (telugu_turn.get("text") or "").strip():
+        tf = hallucination_filter.filter_pass({
+            "text": telugu_turn.get("text", ""), "confidence": telugu_turn.get("confidence"),
+            "language": routing_lang, "model": config.WHISPER_TELUGU_MODEL, "abstained": False})
+        telugu = {"text": (tf.get("text") or "").strip(),
+                  "confidence": telugu_turn.get("confidence"),
+                  "language": routing_lang, "model": config.WHISPER_TELUGU_MODEL,
+                  "hallucination": tf.get("hallucination")}
+        if tf.get("hallucination"):
+            hallucination = hallucination or tf.get("hallucination")
+
+    has_external = (whisper and whisper["text"]) or (telugu and telugu["text"])
+    if has_external:
         sel = asr_selector.select(
             indic_text=indic_text, indic_source=indic_source,
             indic_agreement=sc["agreement"], indic_abstained=indic_abstained,
-            whisper_text=whisper.get("text"), whisper_confidence=whisper.get("confidence"),
-            whisper_no_speech=whisper.get("no_speech_prob"),
+            whisper_text=(whisper.get("text") if whisper else ""),
+            whisper_confidence=(whisper.get("confidence") if whisper else None),
+            whisper_no_speech=(whisper.get("no_speech_prob") if whisper else None),
+            telugu_text=(telugu.get("text") if telugu else None),
+            telugu_confidence=(telugu.get("confidence") if telugu else None),
             embed_fn=embedding_service.similarity,
             agreement_min=config.AGREEMENT_MIN, no_speech_max=config.NO_SPEECH_MAX)
         text, source = sel["text"], sel["source"]
         confidence = sel["confidence"] if sel["confidence"] is not None else sc["confidence"]
         agreement = sel["agreement"] if sel["agreement"] is not None else sc["agreement"]
         selection_reason, selection_flag = sel["reason"], sel["flag"]
-        model = config.WHISPER_MODEL if source == "whisper" else indic_model
+        model = {"whisper": config.WHISPER_MODEL,
+                 "telugu_whisper": config.WHISPER_TELUGU_MODEL}.get(source, indic_model)
         abstained = not (text or "").strip()
     else:
         text, source = indic_text, indic_source
@@ -385,8 +404,8 @@ def run_asr(clean_clip, raw_clip, *, file_prior, whisper_turn=None):
             "confidence": confidence, "agreement": agreement,
             "source": source, "abstained": abstained, "hallucination": hallucination,
             "model": model,
-            # dual-engine extras (None on legacy path)
-            "whisper": whisper, "indic_text": indic_text,
+            # multi-engine extras (None on legacy path)
+            "whisper": whisper, "telugu": telugu, "indic_text": indic_text,
             "indic_confidence": sc["confidence"], "indic_agreement": sc["agreement"],
             "selection_reason": selection_reason, "selection_flag": selection_flag}
 
@@ -401,16 +420,17 @@ def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_ra
     Returns (segment_id, flagged, per_segment_entry)."""
     routing_lang = asr["lang_id"]["routing_lang"]
 
-    whisper_won = asr["source"] == "whisper"
+    # An external engine (generic Whisper or fine-tuned Telugu Whisper) won when
+    # the chosen source is one of those — chosen on its own merits, so the
+    # IndicConformer self-agreement suppression/divergence checks don't apply.
+    external_won = asr["source"] in ("whisper", "telugu_whisper")
 
     # Forensic suppression: at/below the agreement floor the IndicConformer
     # enhanced and original passes share no signal -> the text is noise emitted
     # onto non-speech. Blank it (the clip is preserved for a reviewer) so the
-    # record never carries fabricated words. Only applies when IndicConformer
-    # won — a Whisper-selected segment was chosen on its own merits and must not
-    # be blanked by the other engine's low self-agreement.
+    # record never carries fabricated words. Only applies when IndicConformer won.
     suppressed = False
-    if (not whisper_won and asr["text"] and not asr["abstained"]
+    if (not external_won and asr["text"] and not asr["abstained"]
             and asr["agreement"] <= config.INDIC_SUPPRESS_BELOW):
         asr = {**asr, "text": "", "source": "suppressed_low_agreement"}
         suppressed = True
@@ -431,7 +451,7 @@ def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_ra
         "selection_reason": asr.get("selection_reason"),
         "diarization": diarization_meta,
     }
-    # Whisper pass (dual-engine only) — store its independent output + signals.
+    # Whisper pass (multi-engine only) — store its independent output + signals.
     if asr.get("whisper"):
         w = asr["whisper"]
         candidates["pass1_whisper"] = {
@@ -439,6 +459,12 @@ def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_ra
             "no_speech_prob": w.get("no_speech_prob"),
             "compression_ratio": w.get("compression_ratio"),
             "language": w.get("language"), "model": w.get("model")}
+    # Fine-tuned Telugu Whisper pass.
+    if asr.get("telugu"):
+        t = asr["telugu"]
+        candidates["pass_telugu_whisper"] = {
+            "text": t.get("text", ""), "confidence": t.get("confidence"),
+            "language": t.get("language"), "model": t.get("model")}
 
     reasons = []
     if asr["abstained"]:
@@ -450,11 +476,11 @@ def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_ra
     else:
         # enh/org divergence is an IndicConformer self-check — only meaningful
         # when IndicConformer produced the winning text.
-        if not whisper_won and asr["agreement"] < config.INDIC_SELFCHECK_MIN:
+        if not external_won and asr["agreement"] < config.INDIC_SELFCHECK_MIN:
             reasons.append("enh_orig_divergence")
         if asr["confidence"] is not None and asr["confidence"] < config.INDIC_CONF_MIN:
             reasons.append("low_confidence")
-    # Dual-engine disagreement on pure-native text (selector kept Whisper, flagged).
+    # Engine disagreement on pure-native text (selector flagged for review).
     if asr.get("selection_flag"):
         reasons.append(asr["selection_flag"])
     if asr["hallucination"]:
@@ -463,10 +489,12 @@ def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_ra
     flagged = bool(reasons)
     flag_reason = "+".join(dict.fromkeys(reasons)) if reasons else None
 
+    _source_pass = {"whisper": "whisper", "telugu_whisper": "telugu_whisper"}.get(
+        asr["source"], "indic_conformer")
     seg_id = repo.add_segment(
         session, file_id=job.file_id, start=start, end=end, speaker=speaker,
         text=asr["text"], confidence=asr["confidence"],
-        source_pass=("whisper" if whisper_won else "indic_conformer"), flagged=flagged,
+        source_pass=_source_pass, flagged=flagged,
         review_status="pending" if flagged else "auto_accepted",
         candidates=candidates, clip_original=clip_raw, clip_enhanced=clip_clean,
         detected_language=routing_lang)
@@ -510,6 +538,13 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
     if config.ASR_DUAL_ENGINE and file_prior:
         whisper_words = whisper_service.transcribe_words(original16, file_prior).get("words", [])
 
+    # Third engine: fine-tuned Telugu Whisper, whole-file word timestamps, on the
+    # RAW track. Only for files whose language prior is a fine-tune target (the
+    # fine-tune is Telugu-only). Sliced per turn like the generic Whisper pass.
+    telugu_words = []
+    if config.ASR_TELUGU_ENGINE and file_prior in config.ASR_FT_LANGS:
+        telugu_words = telugu_asr_service.transcribe_words(original16, file_prior).get("words", [])
+
     for idx, unit in enumerate(units):
         if _torch.cuda.is_available():
             _torch.cuda.empty_cache()
@@ -544,11 +579,13 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
                 continue
             # Separation failed -> fall through to mixed-clip transcription.
 
-        # Slice this turn's Whisper text from the whole-file word stream by time.
+        # Slice this turn's text from each whole-file word stream by time.
         whisper_turn = (whisper_service.slice_words(whisper_words, unit["start"], unit["end"])
                         if whisper_words else None)
+        telugu_turn = (whisper_service.slice_words(telugu_words, unit["start"], unit["end"])
+                       if telugu_words else None)
         asr = run_asr(clips["clean"], clips["raw"], file_prior=file_prior,
-                      whisper_turn=whisper_turn)
+                      whisper_turn=whisper_turn, telugu_turn=telugu_turn)
         extra = []
         if utype == "overlap":
             extra.append("overlapping_speech")

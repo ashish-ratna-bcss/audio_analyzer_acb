@@ -158,5 +158,8 @@ def slice_words(words: list, start: float, end: float) -> dict:
     text = " ".join(w["word"] for w in picked).strip()
     if not picked:
         return {"text": "", "confidence": None}
-    conf = round(sum(w["prob"] for w in picked) / len(picked), 3)
+    # Word probabilities may be absent (e.g. the HF-pipeline fine-tuned engine
+    # exposes none) -> confidence is None rather than a fabricated score.
+    probs = [w["prob"] for w in picked if isinstance(w.get("prob"), (int, float))]
+    conf = round(sum(probs) / len(probs), 3) if probs else None
     return {"text": text, "confidence": conf}

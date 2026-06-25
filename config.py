@@ -124,6 +124,18 @@ INDIC_CONFORMER_MODEL = os.getenv("INDIC_CONFORMER_MODEL", "ai4bharat/indic-conf
 # native Telugu -> IndicConformer). False = IndicConformer-only (legacy behaviour).
 ASR_DUAL_ENGINE = os.getenv("ASR_DUAL_ENGINE", "true").lower() == "true"
 
+# Third engine: a language-fine-tuned Whisper (default Telugu) for pure-native
+# turns where generic large-v3 mishears fast/noisy native speech. Selector routes
+# per turn: code-mix/numbers/Latin -> generic large-v3; pure-native -> this
+# fine-tune; IndicConformer remains the rescue/cross-check. Loaded via transformers
+# (downloads to MODEL_DIR like the other models). Enabled only when the file's
+# language prior is in ASR_FT_LANGS. Set ASR_TELUGU_ENGINE=false to disable.
+ASR_TELUGU_ENGINE = os.getenv("ASR_TELUGU_ENGINE", "true").lower() == "true"
+WHISPER_TELUGU_MODEL = os.getenv("WHISPER_TELUGU_MODEL", "vasista22/whisper-telugu-large-v2")
+# File-prior languages that activate the fine-tuned engine (the fine-tune is
+# Telugu-only; other priors skip it and use generic large-v3 + IndicConformer).
+ASR_FT_LANGS = {c.strip() for c in os.getenv("ASR_FT_LANGS", "te").split(",") if c.strip()}
+
 # Pass 3: SeamlessM4T v2 — Meta multilingual end-to-end model (run on original audio).
 SEAMLESS_MODEL = os.getenv("SEAMLESS_MODEL", "facebook/seamless-m4t-v2-large")
 

@@ -31,7 +31,7 @@ _NO_STUB_MODULES = {
     "test_recall_wrappers_import", "test_phase4_wrappers_import",
     "test_indic_abstain", "test_hallucination_filter", "test_lang_vote",
     "test_preprocess_service", "test_transcript_outputs", "test_sortformer_service",
-    "test_sortformer_client",
+    "test_sortformer_client", "test_telugu_asr_service", "test_asr_selector",
 }
 
 
@@ -84,6 +84,10 @@ def _stub_models(monkeypatch, request):
             lambda p, lang=None: {"text": "", "confidence": None,
                                   "no_speech_prob": None, "compression_ratio": None,
                                   "language": lang, "model": "stub"}, raising=False)
+        from services import telugu_asr_service
+        monkeypatch.setattr(telugu_asr_service, "transcribe_words",
+            lambda p, lang=None: {"words": [], "text": "", "language": lang},
+            raising=False)
     except Exception:
         pass
     yield

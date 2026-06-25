@@ -75,3 +75,14 @@ def test_slice_words_handles_empty_list():
     r = ws.slice_words([], 0.0, 2.0)
     assert r["text"] == ""
     assert r["confidence"] is None
+
+
+def test_slice_words_none_probs_confidence_none():
+    # Fine-tuned engine words carry no probability -> text still sliced, conf None.
+    words = [
+        {"start": 0.5, "end": 1.0, "word": "రేవంత్", "prob": None},
+        {"start": 1.0, "end": 1.4, "word": "గారు", "prob": None},
+    ]
+    r = ws.slice_words(words, 0.0, 2.0)
+    assert r["text"] == "రేవంత్ గారు"
+    assert r["confidence"] is None
