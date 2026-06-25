@@ -42,7 +42,10 @@ def _mock_models(monkeypatch):
 
 def test_run_indic_abstains_non_indic():
     # routed to a non-Indic language -> IndicConformer abstains, no fallback.
-    with patch.object(ptasks.lang_id_service, "identify",
+    # Single-engine path (dual-engine forced off) so this exercises IndicConformer
+    # alone; the dual-engine fallback-to-Whisper case is covered by test_asr_selector.
+    with patch.object(ptasks.config, "ASR_DUAL_ENGINE", False), \
+         patch.object(ptasks.lang_id_service, "identify",
                       return_value={"top1": "kor", "top1_confidence": 0.9,
                                     "top2": None, "top2_confidence": 0.0}), \
          patch.object(ptasks.lang_id_service, "to_iso639_1", return_value="ko"), \
@@ -59,6 +62,8 @@ def test_run_indic_abstains_non_indic():
 
 def test_run_indic_dualrun_agreement_high():
     # enhanced and original decodes agree -> high confidence, not divergent.
+    # Pure-native Telugu (no Latin/digits): with dual-engine on, the selector
+    # compares against Whisper and keeps IndicConformer when they agree.
     with patch.object(ptasks.lang_id_service, "identify",
                       return_value={"top1": "tel", "top1_confidence": 0.9,
                                     "top2": None, "top2_confidence": 0.0}), \
@@ -66,6 +71,10 @@ def test_run_indic_dualrun_agreement_high():
          patch.object(ptasks.indic_asr_service, "transcribe_clip",
                       return_value={"text": "ధర పదిహేను రూపాయలు", "confidence": None,
                                     "language": "te", "model": "indic", "abstained": False}), \
+         patch.object(ptasks.whisper_service, "transcribe_clip",
+                      return_value={"text": "ధర పదిహేను రూపాయల", "confidence": 0.8,
+                                    "no_speech_prob": 0.0, "compression_ratio": 1.0,
+                                    "language": "te", "model": "whisper"}), \
          patch.object(ptasks.embedding_service, "similarity", return_value=0.99):
         asr = ptasks.run_indic("/tmp/clean.wav", "/tmp/org.wav", file_prior="te")
 
@@ -75,7 +84,10 @@ def test_run_indic_dualrun_agreement_high():
 
 
 def test_run_indic_blanks_ghost_phrase():
-    with patch.object(ptasks.lang_id_service, "identify",
+    # Ghost-phrase blanking is an IndicConformer-pass concern; force single-engine
+    # so the assertion targets that filter, not the dual-engine selector.
+    with patch.object(ptasks.config, "ASR_DUAL_ENGINE", False), \
+         patch.object(ptasks.lang_id_service, "identify",
                       return_value={"top1": "eng", "top1_confidence": 0.9,
                                     "top2": None, "top2_confidence": 0.0}), \
          patch.object(ptasks.lang_id_service, "to_iso639_1", return_value="en"), \

@@ -70,5 +70,17 @@ def _stub_models(monkeypatch, request):
         monkeypatch.setattr(embedding_service, "similarity", lambda a, b: 0.95, raising=False)
     except Exception:
         pass
+
+    # Dual-engine ASR: stub Whisper so pipeline-driving tests never load
+    # faster-whisper. Pure-native stub text -> selector keeps IndicConformer,
+    # preserving the legacy single-engine behaviour these tests assert.
+    try:
+        from services import whisper_service
+        monkeypatch.setattr(whisper_service, "transcribe_clip",
+            lambda p, lang=None: {"text": "స్టబ్", "confidence": 0.9,
+                                  "no_speech_prob": 0.0, "compression_ratio": 1.0,
+                                  "language": lang, "model": "stub"}, raising=False)
+    except Exception:
+        pass
     yield
 

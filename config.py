@@ -119,6 +119,11 @@ MMS_LID_MODEL = os.getenv("MMS_LID_MODEL", "facebook/mms-lid-256")
 # Loads via AutoModel with trust_remote_code=True; no NeMo dependency.
 INDIC_CONFORMER_MODEL = os.getenv("INDIC_CONFORMER_MODEL", "ai4bharat/indic-conformer-600m-multilingual")
 
+# Dual-engine ASR: run Whisper-large-v3 alongside IndicConformer per clip and let
+# asr_selector pick the better output (code-mix/numbers/entities -> Whisper; pure
+# native Telugu -> IndicConformer). False = IndicConformer-only (legacy behaviour).
+ASR_DUAL_ENGINE = os.getenv("ASR_DUAL_ENGINE", "true").lower() == "true"
+
 # Pass 3: SeamlessM4T v2 — Meta multilingual end-to-end model (run on original audio).
 SEAMLESS_MODEL = os.getenv("SEAMLESS_MODEL", "facebook/seamless-m4t-v2-large")
 

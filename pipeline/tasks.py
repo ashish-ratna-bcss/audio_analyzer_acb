@@ -15,7 +15,7 @@ from services import vad_union
 from services import preprocess_service, hallucination_filter
 from services import (diarization_service, indic_asr_service,
                       embedding_service, clip_service, lang_id_service)
-from services import cross_model
+from services import cross_model, whisper_service, asr_selector
 from services import transcript_service as ts
 from services import webhook_service
 from services.hashing import sha256_file
@@ -288,18 +288,19 @@ def _build_units(turns, vad_union, same_speaker_gap_s=0.5, min_dur_s=0.3):
     return units
 
 
-def run_indic(clean_clip, raw_clip, *, file_prior):
-    """Single ASR model — IndicConformer — run twice for self-validation.
+def run_asr(clean_clip, raw_clip, *, file_prior):
+    """Dual-engine ASR — IndicConformer + Whisper-large-v3 — with per-clip
+    output-content selection.
 
     Language routing: trust clip MMS-LID above the gate (and within ALLOWED_LANGS
-    when set), else the file prior. With no Whisper to self-detect, an unresolved
-    language falls back to the file prior; if that is also absent the segment
-    cannot be routed and IndicConformer abstains.
+    when set), else the file prior. The routed language forces both engines.
 
-    Validation (replaces 3-way cross-model): transcribe the enhanced clip AND the
-    original clip with IndicConformer; their agreement is the confidence. The
-    enhanced decode is primary (cleaner); the original guards against
-    over-suppression artifacts.
+    IndicConformer runs twice (enhanced + original clip) for self-validation; the
+    enhanced decode is primary, the original guards against over-suppression. When
+    ASR_DUAL_ENGINE is on, Whisper also transcribes the enhanced clip and
+    asr_selector picks the better text: code-mix/numbers/entities -> Whisper, pure
+    native Telugu -> IndicConformer (flagging genuine disagreement for review).
+    When off, behaviour is identical to the legacy IndicConformer-only path.
     """
     mms = lang_id_service.identify(clean_clip)
     clip_lang = lang_id_service.to_iso639_1(mms.get("top1"))
@@ -325,14 +326,41 @@ def run_indic(clean_clip, raw_clip, *, file_prior):
 
     enh_text = (i_enh.get("text") or "").strip()
     org_text = (i_org.get("text") or "").strip()
-    text = enh_text or org_text          # enhanced primary, original fallback
-    source = "indic_enhanced" if enh_text else ("indic_original" if org_text else "none")
+    indic_text = enh_text or org_text          # enhanced primary, original fallback
+    indic_source = "indic_enhanced" if enh_text else ("indic_original" if org_text else "none")
+    indic_abstained = bool(i_enh.get("abstained") and i_org.get("abstained"))
 
     sc = cross_model.selfcheck_confidence(enh_text, org_text,
                                           embed_fn=embedding_service.similarity)
-
-    abstained = bool(i_enh.get("abstained") and i_org.get("abstained"))
     hallucination = i_enh.get("hallucination") or i_org.get("hallucination")
+    indic_model = i_enh.get("model") or i_org.get("model", config.INDIC_CONFORMER_MODEL)
+
+    # Second engine: Whisper on the enhanced clip (routed language). Skipped when
+    # the layer is off or there is no language to force (Whisper auto-detect on a
+    # short noisy clip is exactly the LID misroute we are trying to avoid).
+    whisper = None
+    if config.ASR_DUAL_ENGINE and routing_lang:
+        whisper = whisper_service.transcribe_clip(clean_clip, routing_lang)
+
+    if whisper:
+        sel = asr_selector.select(
+            indic_text=indic_text, indic_source=indic_source,
+            indic_agreement=sc["agreement"], indic_abstained=indic_abstained,
+            whisper_text=whisper.get("text"), whisper_confidence=whisper.get("confidence"),
+            whisper_no_speech=whisper.get("no_speech_prob"),
+            embed_fn=embedding_service.similarity,
+            agreement_min=config.AGREEMENT_MIN, no_speech_max=config.NO_SPEECH_MAX)
+        text, source = sel["text"], sel["source"]
+        confidence = sel["confidence"] if sel["confidence"] is not None else sc["confidence"]
+        agreement = sel["agreement"] if sel["agreement"] is not None else sc["agreement"]
+        selection_reason, selection_flag = sel["reason"], sel["flag"]
+        model = config.WHISPER_MODEL if source == "whisper" else indic_model
+        abstained = not (text or "").strip()
+    else:
+        text, source = indic_text, indic_source
+        confidence, agreement = sc["confidence"], sc["agreement"]
+        selection_reason, selection_flag = None, None
+        model, abstained = indic_model, indic_abstained
 
     return {"lang_id": {"mms_top1": mms.get("top1"),
                         "mms_top1_confidence": mms.get("top1_confidence"),
@@ -340,9 +368,17 @@ def run_indic(clean_clip, raw_clip, *, file_prior):
                         "mms_top2_confidence": mms.get("top2_confidence"),
                         "routing_lang": routing_lang},
             "text": text, "enh_text": enh_text, "org_text": org_text,
-            "confidence": sc["confidence"], "agreement": sc["agreement"],
+            "confidence": confidence, "agreement": agreement,
             "source": source, "abstained": abstained, "hallucination": hallucination,
-            "model": i_enh.get("model") or i_org.get("model", config.INDIC_CONFORMER_MODEL)}
+            "model": model,
+            # dual-engine extras (None on legacy path)
+            "whisper": whisper, "indic_text": indic_text,
+            "indic_confidence": sc["confidence"], "indic_agreement": sc["agreement"],
+            "selection_reason": selection_reason, "selection_flag": selection_flag}
+
+
+# Backwards-compatible alias: the dual-engine path supersedes the indic-only one.
+run_indic = run_asr
 
 
 def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_raw,
@@ -351,27 +387,44 @@ def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_ra
     Returns (segment_id, flagged, per_segment_entry)."""
     routing_lang = asr["lang_id"]["routing_lang"]
 
-    # Forensic suppression: at/below the agreement floor the enhanced and original
-    # passes share no signal -> the text is noise emitted onto non-speech. Blank it
-    # (the clip is preserved on the segment for a reviewer to listen to) so the
-    # record never carries fabricated words. Keep already-empty/abstained as-is.
+    whisper_won = asr["source"] == "whisper"
+
+    # Forensic suppression: at/below the agreement floor the IndicConformer
+    # enhanced and original passes share no signal -> the text is noise emitted
+    # onto non-speech. Blank it (the clip is preserved for a reviewer) so the
+    # record never carries fabricated words. Only applies when IndicConformer
+    # won — a Whisper-selected segment was chosen on its own merits and must not
+    # be blanked by the other engine's low self-agreement.
     suppressed = False
-    if (asr["text"] and not asr["abstained"]
+    if (not whisper_won and asr["text"] and not asr["abstained"]
             and asr["agreement"] <= config.INDIC_SUPPRESS_BELOW):
         asr = {**asr, "text": "", "source": "suppressed_low_agreement"}
         suppressed = True
 
     candidates = {
         "lang_id": asr["lang_id"],
+        # IndicConformer pass — records the engine's own enh/org outputs and
+        # self-check (independent of which engine ultimately won the segment).
         "indic_conformer": {
-            "text": asr["text"], "enh_text": asr["enh_text"], "org_text": asr["org_text"],
-            "confidence": asr["confidence"], "agreement": asr["agreement"],
-            "language": routing_lang, "model": asr["model"],
+            "text": asr.get("indic_text", asr["text"]),
+            "enh_text": asr["enh_text"], "org_text": asr["org_text"],
+            "confidence": asr.get("indic_confidence", asr["confidence"]),
+            "agreement": asr.get("indic_agreement", asr["agreement"]),
+            "language": routing_lang, "model": config.INDIC_CONFORMER_MODEL,
             "source": asr["source"], "abstained": asr["abstained"],
             "hallucination": asr["hallucination"]},
         "agreement": asr["agreement"],
+        "selection_reason": asr.get("selection_reason"),
         "diarization": diarization_meta,
     }
+    # Whisper pass (dual-engine only) — store its independent output + signals.
+    if asr.get("whisper"):
+        w = asr["whisper"]
+        candidates["pass1_whisper"] = {
+            "text": w.get("text", ""), "confidence": w.get("confidence"),
+            "no_speech_prob": w.get("no_speech_prob"),
+            "compression_ratio": w.get("compression_ratio"),
+            "language": w.get("language"), "model": w.get("model")}
 
     reasons = []
     if asr["abstained"]:
@@ -381,10 +434,15 @@ def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_ra
     elif not asr["text"]:
         reasons.append("asr_empty")
     else:
-        if asr["agreement"] < config.INDIC_SELFCHECK_MIN:
+        # enh/org divergence is an IndicConformer self-check — only meaningful
+        # when IndicConformer produced the winning text.
+        if not whisper_won and asr["agreement"] < config.INDIC_SELFCHECK_MIN:
             reasons.append("enh_orig_divergence")
-        if asr["confidence"] < config.INDIC_CONF_MIN:
+        if asr["confidence"] is not None and asr["confidence"] < config.INDIC_CONF_MIN:
             reasons.append("low_confidence")
+    # Dual-engine disagreement on pure-native text (selector kept Whisper, flagged).
+    if asr.get("selection_flag"):
+        reasons.append(asr["selection_flag"])
     if asr["hallucination"]:
         reasons.append(asr["hallucination"])
     reasons.extend(extra_flags or [])
@@ -394,7 +452,7 @@ def _emit_segment(job, session, *, start, end, speaker, asr, clip_clean, clip_ra
     seg_id = repo.add_segment(
         session, file_id=job.file_id, start=start, end=end, speaker=speaker,
         text=asr["text"], confidence=asr["confidence"],
-        source_pass="indic_conformer", flagged=flagged,
+        source_pass=("whisper" if whisper_won else "indic_conformer"), flagged=flagged,
         review_status="pending" if flagged else "auto_accepted",
         candidates=candidates, clip_original=clip_raw, clip_enhanced=clip_clean,
         detected_language=routing_lang)
@@ -449,7 +507,7 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
                         _torch.cuda.empty_cache()
                     spk = (unit["speakers"][si] if si < len(unit["speakers"])
                            else f"overlap_spk{si}")
-                    asr = run_indic(stem, stem, file_prior=file_prior)
+                    asr = run_asr(stem, stem, file_prior=file_prior)
                     meta = {"speaker": spk,
                             "concurrent_speakers": [s for s in unit["speakers"] if s != spk],
                             "is_overlap": True, "segment_type": "overlap",
@@ -463,7 +521,7 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
                 continue
             # Separation failed -> fall through to mixed-clip transcription.
 
-        asr = run_indic(clips["clean"], clips["raw"], file_prior=file_prior)
+        asr = run_asr(clips["clean"], clips["raw"], file_prior=file_prior)
         extra = []
         if utype == "overlap":
             extra.append("overlapping_speech")
