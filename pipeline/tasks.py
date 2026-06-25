@@ -250,7 +250,9 @@ def _coalesce_speaker_units(units, same_speaker_gap_s):
     return out
 
 
-def _build_units(turns, vad_union, same_speaker_gap_s=0.5, min_dur_s=0.3):
+def _build_units(turns, vad_union, same_speaker_gap_s=None, min_dur_s=0.3):
+    if same_speaker_gap_s is None:
+        same_speaker_gap_s = config.DIARIZATION_SAME_SPEAKER_GAP_S
     """Typed transcription units covering ALL detected speech:
       - 'speaker': exactly one active speaker
       - 'overlap': two+ active speakers (cross-talk) -> SepFormer separation

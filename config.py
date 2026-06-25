@@ -143,6 +143,16 @@ GAP_MIN_DUR_S = float(os.getenv("GAP_MIN_DUR_S", "1.0"))  # ignore micro-gaps
 # short pauses into one block, yielding finer/quieter speaker turns.
 DIARIZATION_MIN_DURATION_OFF = float(os.getenv("DIARIZATION_MIN_DURATION_OFF", "0.0"))
 
+# Coalesce consecutive same-speaker turns separated by <= this gap into one unit
+# BEFORE clip/ASR. pyannote over-segments conversational speech into many short
+# turns; with the whole-file Whisper slice, tiny turns cut sentence context at
+# their boundaries and garble (esp. short utterances). Merging same-speaker
+# turns across natural pauses restores sentence-length spans -> Whisper's fluent
+# decode survives. Safe: an interjection by the other speaker breaks the merge
+# chain, so turns never merge across a speaker change. 0.5s was too tight (normal
+# pauses exceed it); 1.5s spans conversational pauses without crossing speakers.
+DIARIZATION_SAME_SPEAKER_GAP_S = float(os.getenv("DIARIZATION_SAME_SPEAKER_GAP_S", "1.5"))
+
 # Overlap separation: SpeechBrain SepFormer splits cross-talk windows into
 # per-speaker streams; each stream is transcribed independently by all 3 ASR
 # passes so both/all overlapped voices are recovered (not just the loudest).
