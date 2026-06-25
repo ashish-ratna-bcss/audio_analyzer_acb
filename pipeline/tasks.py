@@ -288,19 +288,22 @@ def _build_units(turns, vad_union, same_speaker_gap_s=0.5, min_dur_s=0.3):
     return units
 
 
-def run_asr(clean_clip, raw_clip, *, file_prior):
-    """Dual-engine ASR — IndicConformer + Whisper-large-v3 — with per-clip
-    output-content selection.
+def run_asr(clean_clip, raw_clip, *, file_prior, whisper_turn=None):
+    """Dual-engine ASR — IndicConformer (per-clip) + Whisper-large-v3 (whole-file,
+    sliced per turn) — with output-content selection.
 
     Language routing: trust clip MMS-LID above the gate (and within ALLOWED_LANGS
-    when set), else the file prior. The routed language forces both engines.
+    when set), else the file prior. The routed language forces IndicConformer.
 
     IndicConformer runs twice (enhanced + original clip) for self-validation; the
-    enhanced decode is primary, the original guards against over-suppression. When
-    ASR_DUAL_ENGINE is on, Whisper also transcribes the enhanced clip and
-    asr_selector picks the better text: code-mix/numbers/entities -> Whisper, pure
-    native Telugu -> IndicConformer (flagging genuine disagreement for review).
-    When off, behaviour is identical to the legacy IndicConformer-only path.
+    enhanced decode is primary, the original guards against over-suppression.
+
+    Whisper is NOT run per clip (short-clip seq2seq decode degrades badly). The
+    caller decodes the WHOLE file once with word timestamps and passes this turn's
+    time-sliced text/confidence as `whisper_turn` (WhisperX pattern). asr_selector
+    then picks: code-mix/numbers/entities -> Whisper, pure native Telugu ->
+    IndicConformer (flagging genuine disagreement). `whisper_turn=None` (overlap
+    stems, dual-engine off, or empty slice) -> legacy IndicConformer-only path.
     """
     mms = lang_id_service.identify(clean_clip)
     clip_lang = lang_id_service.to_iso639_1(mms.get("top1"))
@@ -335,14 +338,23 @@ def run_asr(clean_clip, raw_clip, *, file_prior):
     hallucination = i_enh.get("hallucination") or i_org.get("hallucination")
     indic_model = i_enh.get("model") or i_org.get("model", config.INDIC_CONFORMER_MODEL)
 
-    # Second engine: Whisper on the enhanced clip (routed language). Skipped when
-    # the layer is off or there is no language to force (Whisper auto-detect on a
-    # short noisy clip is exactly the LID misroute we are trying to avoid).
+    # Whisper output for this turn = the whole-file decode sliced by time (passed
+    # in by the caller). Ghost-filter it so the same non-speech phrases blanked
+    # for IndicConformer are also blanked here. None/empty -> indic-only path.
     whisper = None
-    if config.ASR_DUAL_ENGINE and routing_lang:
-        whisper = whisper_service.transcribe_clip(clean_clip, routing_lang)
+    if config.ASR_DUAL_ENGINE and whisper_turn and (whisper_turn.get("text") or "").strip():
+        wf = hallucination_filter.filter_pass({
+            "text": whisper_turn.get("text", ""), "confidence": whisper_turn.get("confidence"),
+            "language": routing_lang, "model": config.WHISPER_MODEL, "abstained": False})
+        whisper = {"text": (wf.get("text") or "").strip(),
+                   "confidence": whisper_turn.get("confidence"),
+                   "no_speech_prob": None, "compression_ratio": None,
+                   "language": routing_lang, "model": config.WHISPER_MODEL,
+                   "hallucination": wf.get("hallucination")}
+        if wf.get("hallucination"):
+            hallucination = hallucination or wf.get("hallucination")
 
-    if whisper:
+    if whisper and whisper["text"]:
         sel = asr_selector.select(
             indic_text=indic_text, indic_source=indic_source,
             indic_agreement=sc["agreement"], indic_abstained=indic_abstained,
@@ -487,6 +499,15 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
     file_prior = lang_id_service.vote_file_language(
         lids, allowed_langs=config.ALLOWED_LANGS, min_conf=config.LID_VOTE_MIN_CONF)
 
+    # WhisperX-pattern second engine: decode the WHOLE file once with word
+    # timestamps (full context -> fluent, punctuated, correct numbers), on the
+    # RAW 16k track (speech enhancement degrades Whisper). Each turn's text is
+    # then sliced from these words by time and handed to run_asr. One decode for
+    # the file beats short per-clip decodes that lose all context.
+    whisper_words = []
+    if config.ASR_DUAL_ENGINE and file_prior:
+        whisper_words = whisper_service.transcribe_words(original16, file_prior).get("words", [])
+
     for idx, unit in enumerate(units):
         if _torch.cuda.is_available():
             _torch.cuda.empty_cache()
@@ -521,7 +542,11 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
                 continue
             # Separation failed -> fall through to mixed-clip transcription.
 
-        asr = run_asr(clips["clean"], clips["raw"], file_prior=file_prior)
+        # Slice this turn's Whisper text from the whole-file word stream by time.
+        whisper_turn = (whisper_service.slice_words(whisper_words, unit["start"], unit["end"])
+                        if whisper_words else None)
+        asr = run_asr(clips["clean"], clips["raw"], file_prior=file_prior,
+                      whisper_turn=whisper_turn)
         extra = []
         if utype == "overlap":
             extra.append("overlapping_speech")

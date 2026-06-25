@@ -92,3 +92,71 @@ def transcribe_clip(wav_path: str, lang_code: str | None) -> dict:
     except Exception as exc:
         logger.warning("Whisper failed for %s (lang=%s): %s", wav_path, lang_code, exc)
         return empty
+
+
+def transcribe_words(wav_path: str, lang_code: str | None) -> dict:
+    """Whole-file decode with word-level timestamps (WhisperX-style).
+
+    Whisper is a long-context model: decoding the ENTIRE file at once (rather
+    than tiny VAD clips) is what produces fluent, punctuated, correctly-numbered
+    output. Word timestamps then let the caller slice each diarization turn's
+    text by time. Feed RAW audio — speech enhancement creates artifacts that
+    degrade Whisper (see denoising-hurts-ASR literature); Whisper was trained on
+    real-world noisy audio.
+
+    Returns {"words": [{"start","end","word","prob"}], "text": <full>,
+             "language": <detected/forced>}. Never raises — empty on failure so
+    the pipeline falls back to per-clip IndicConformer.
+    """
+    empty = {"words": [], "text": "", "language": lang_code}
+    try:
+        model = _load()
+        kwargs = {}
+        if lang_code and lang_code != "auto":
+            kwargs["language"] = lang_code
+        segments_iter, info = model.transcribe(
+            wav_path,
+            task="transcribe",
+            word_timestamps=True,
+            beam_size=10,
+            condition_on_previous_text=False,
+            temperature=0.0,
+            repetition_penalty=1.3,
+            no_speech_threshold=config.NO_SPEECH_MAX,
+            log_prob_threshold=-1.0,
+            compression_ratio_threshold=2.4,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=config.VAD_MIN_SILENCE_MS,
+                                speech_pad_ms=config.VAD_SPEECH_PAD_MS),
+            **kwargs,
+        )
+        words, texts = [], []
+        for seg in segments_iter:
+            t = (seg.text or "").strip()
+            if t:
+                texts.append(t)
+            for w in (seg.words or []):
+                token = (w.word or "").strip()
+                if not token:
+                    continue
+                words.append({"start": round(w.start, 3), "end": round(w.end, 3),
+                              "word": token, "prob": round(getattr(w, "probability", 0.0) or 0.0, 3)})
+        return {"words": words, "text": " ".join(texts).strip(),
+                "language": (info.language if info else lang_code)}
+    except Exception as exc:
+        logger.warning("Whisper whole-file failed for %s (lang=%s): %s",
+                       wav_path, lang_code, exc)
+        return empty
+
+
+def slice_words(words: list, start: float, end: float) -> dict:
+    """Collect Whisper words whose midpoint falls within [start, end] (the
+    diarization turn) into that turn's text + mean word probability (confidence).
+    Midpoint membership avoids double-counting words that straddle a boundary."""
+    picked = [w for w in (words or [])
+              if start <= (w["start"] + w["end"]) / 2.0 <= end]
+    text = " ".join(w["word"] for w in picked).strip()
+    if not picked:
+        return {"text": "", "confidence": None}
+    conf = round(sum(w["prob"] for w in picked) / len(picked), 3)
+    return {"text": text, "confidence": conf}

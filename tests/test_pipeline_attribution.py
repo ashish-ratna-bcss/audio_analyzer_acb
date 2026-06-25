@@ -60,10 +60,9 @@ def test_run_indic_abstains_non_indic():
     assert asr["source"] == "none"
 
 
-def test_run_indic_dualrun_agreement_high():
-    # enhanced and original decodes agree -> high confidence, not divergent.
-    # Pure-native Telugu (no Latin/digits): with dual-engine on, the selector
-    # compares against Whisper and keeps IndicConformer when they agree.
+def test_run_asr_pure_native_agree_keeps_indic():
+    # Pure-native Telugu turn (no Latin/digits) that agrees with the whole-file
+    # Whisper slice -> selector keeps IndicConformer for sharper native script.
     with patch.object(ptasks.lang_id_service, "identify",
                       return_value={"top1": "tel", "top1_confidence": 0.9,
                                     "top2": None, "top2_confidence": 0.0}), \
@@ -71,16 +70,31 @@ def test_run_indic_dualrun_agreement_high():
          patch.object(ptasks.indic_asr_service, "transcribe_clip",
                       return_value={"text": "ధర పదిహేను రూపాయలు", "confidence": None,
                                     "language": "te", "model": "indic", "abstained": False}), \
-         patch.object(ptasks.whisper_service, "transcribe_clip",
-                      return_value={"text": "ధర పదిహేను రూపాయల", "confidence": 0.8,
-                                    "no_speech_prob": 0.0, "compression_ratio": 1.0,
-                                    "language": "te", "model": "whisper"}), \
          patch.object(ptasks.embedding_service, "similarity", return_value=0.99):
-        asr = ptasks.run_indic("/tmp/clean.wav", "/tmp/org.wav", file_prior="te")
+        asr = ptasks.run_asr("/tmp/clean.wav", "/tmp/org.wav", file_prior="te",
+                             whisper_turn={"text": "ధర పదిహేను రూపాయల", "confidence": 0.8})
 
     assert asr["text"] == "ధర పదిహేను రూపాయలు"
     assert asr["agreement"] >= 0.9
     assert asr["source"] == "indic_enhanced"
+
+
+def test_run_asr_code_mix_turn_picks_whisper():
+    # Whisper turn-text with Latin/digits -> Whisper wins (code-mix / numbers).
+    with patch.object(ptasks.lang_id_service, "identify",
+                      return_value={"top1": "tel", "top1_confidence": 0.9,
+                                    "top2": None, "top2_confidence": 0.0}), \
+         patch.object(ptasks.lang_id_service, "to_iso639_1", return_value="te"), \
+         patch.object(ptasks.indic_asr_service, "transcribe_clip",
+                      return_value={"text": "పదకొండు వందల రూపాయలు", "confidence": None,
+                                    "language": "te", "model": "indic", "abstained": False}), \
+         patch.object(ptasks.embedding_service, "similarity", return_value=0.5):
+        asr = ptasks.run_asr("/tmp/clean.wav", "/tmp/org.wav", file_prior="te",
+                             whisper_turn={"text": "1100 rupees over due", "confidence": 0.82})
+
+    assert asr["text"] == "1100 rupees over due"
+    assert asr["source"] == "whisper"
+    assert asr["confidence"] == 0.82
 
 
 def test_run_indic_blanks_ghost_phrase():

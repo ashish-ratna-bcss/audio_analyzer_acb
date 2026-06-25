@@ -72,13 +72,17 @@ def _stub_models(monkeypatch, request):
         pass
 
     # Dual-engine ASR: stub Whisper so pipeline-driving tests never load
-    # faster-whisper. Pure-native stub text -> selector keeps IndicConformer,
-    # preserving the legacy single-engine behaviour these tests assert.
+    # faster-whisper. Empty whole-file word stream -> every turn slice is empty
+    # -> run_asr stays on the IndicConformer-only path, preserving the legacy
+    # single-engine behaviour these tests assert.
     try:
         from services import whisper_service
+        monkeypatch.setattr(whisper_service, "transcribe_words",
+            lambda p, lang=None: {"words": [], "text": "", "language": lang},
+            raising=False)
         monkeypatch.setattr(whisper_service, "transcribe_clip",
-            lambda p, lang=None: {"text": "స్టబ్", "confidence": 0.9,
-                                  "no_speech_prob": 0.0, "compression_ratio": 1.0,
+            lambda p, lang=None: {"text": "", "confidence": None,
+                                  "no_speech_prob": None, "compression_ratio": None,
                                   "language": lang, "model": "stub"}, raising=False)
     except Exception:
         pass
