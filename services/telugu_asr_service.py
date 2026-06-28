@@ -32,6 +32,18 @@ def _load():
             torch_dtype=dtype,
             model_kwargs={"cache_dir": config.MODEL_DIR},
         )
+        # The fine-tune ships an incomplete generation_config (missing
+        # no_timestamps_token_id + alignment_heads), so return_timestamps="word"
+        # raises. Attach the base whisper-large-v2 generation config, which has
+        # the timestamp tokens and cross-attention alignment heads needed for
+        # word-level DTW timestamps. Keep model-specific fields where present.
+        try:
+            from transformers import GenerationConfig
+            base = GenerationConfig.from_pretrained("openai/whisper-large-v2",
+                                                    cache_dir=config.MODEL_DIR)
+            _pipe.model.generation_config = base
+        except Exception as exc:
+            logger.warning("could not attach base whisper generation_config: %s", exc)
         logger.info("Fine-tuned Whisper loaded.")
     return _pipe
 
