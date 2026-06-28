@@ -88,6 +88,7 @@ def create_case():
              dependencies=[Depends(require_api_key)])
 async def upload_file(case_id: str, audio: UploadFile = File(...),
                       separate: bool = Form(default=False),
+                      num_speakers: int = Form(default=0),
                       callback_url: str = Form(default="")):
     ext = os.path.splitext(audio.filename or "")[1].lower()
     if ext not in config.ALLOWED_EXTENSIONS:
@@ -100,6 +101,8 @@ async def upload_file(case_id: str, audio: UploadFile = File(...),
     # Create the file row first so we can name the staged upload by file_id;
     # L0 (pipeline) finds it deterministically at cases/{case}/inbox/{file_id}{ext}.
     opts = {"separate": separate}
+    if num_speakers and num_speakers > 0:
+        opts["num_speakers"] = num_speakers   # exact speaker count hint for diarization
     if callback_url:
         opts["callback_url"] = callback_url   # webhook target for status events
     with get_session() as s:

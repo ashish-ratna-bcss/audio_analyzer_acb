@@ -19,9 +19,16 @@ def _apply_sensitivity(pipeline):
             seg = dict(current.get("segmentation") or {})
             seg["min_duration_off"] = config.DIARIZATION_MIN_DURATION_OFF
             current = {**current, "segmentation": seg}
+            # Lower the clustering merge threshold so fast speaker changes are
+            # not absorbed into the previous speaker (the main 3.1 confusion mode).
+            clt = config.DIARIZATION_CLUSTERING_THRESHOLD
+            if clt is not None and isinstance(current.get("clustering"), dict):
+                clus = dict(current["clustering"])
+                clus["threshold"] = clt
+                current = {**current, "clustering": clus}
             pipeline.instantiate(current)
-            logger.info("pyannote sensitivity applied: min_duration_off=%s",
-                        config.DIARIZATION_MIN_DURATION_OFF)
+            logger.info("pyannote sensitivity applied: min_duration_off=%s clustering.threshold=%s",
+                        config.DIARIZATION_MIN_DURATION_OFF, clt)
     except Exception as exc:
         logger.warning("pyannote sensitivity tuning skipped: %s", exc)
 

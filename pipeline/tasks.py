@@ -177,7 +177,12 @@ def _l3_vad_union(job, in16, enhanced, stem, session):
 
 
 def _l4_diarize(job, in48, session):
-    turns, model_version = diarization_service.diarize_with_overlap(in48)
+    # num_speakers hint (from upload) constrains pyannote to an exact speaker
+    # count — a large accuracy gain when the caller knows it (e.g. 2 for a
+    # one-to-one call). 0/absent => auto-detect (unchanged behaviour).
+    ns = (job.options or {}).get("num_speakers")
+    ns = ns if isinstance(ns, int) and ns > 0 else None
+    turns, model_version = diarization_service.diarize_with_overlap(in48, num_speakers=ns)
     out = storage.derivative_path(job.case_id, job.file_id, "diarization",
                                   f"{job.file_id}_speaker_timeline.json")
     speakers = sorted({t["speaker"] for t in turns})

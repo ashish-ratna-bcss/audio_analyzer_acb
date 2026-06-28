@@ -182,6 +182,14 @@ GAP_MIN_DUR_S = float(os.getenv("GAP_MIN_DUR_S", "1.0"))  # ignore micro-gaps
 # short pauses into one block, yielding finer/quieter speaker turns.
 DIARIZATION_MIN_DURATION_OFF = float(os.getenv("DIARIZATION_MIN_DURATION_OFF", "0.0"))
 
+# Agglomerative-clustering merge threshold. pyannote 3.1 default ~0.70; LOWER
+# splits speakers more readily -> catches fast turn-taking (a quick reply by
+# speaker 2 right after speaker 1) that the default merges into one speaker.
+# Too low over-splits one speaker into many. 0.60 is a mild nudge toward
+# catching speaker changes. Empty string = leave pyannote's tuned default.
+_diar_clt = os.getenv("DIARIZATION_CLUSTERING_THRESHOLD", "0.60").strip()
+DIARIZATION_CLUSTERING_THRESHOLD = float(_diar_clt) if _diar_clt else None
+
 # Coalesce consecutive same-speaker turns separated by <= this gap into one unit
 # BEFORE clip/ASR. pyannote over-segments conversational speech into many short
 # turns; with the whole-file Whisper slice, tiny turns cut sentence context at
