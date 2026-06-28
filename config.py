@@ -136,6 +136,33 @@ WHISPER_TELUGU_MODEL = os.getenv("WHISPER_TELUGU_MODEL", "vasista22/whisper-telu
 # Telugu-only; other priors skip it and use generic large-v3 + IndicConformer).
 ASR_FT_LANGS = {c.strip() for c in os.getenv("ASR_FT_LANGS", "te").split(",") if c.strip()}
 
+# --- L7: deterministic domain-glossary correction (additive, presentation-only) ---
+# Maps known ASR mishears (and case/script variants) of loan/debt-recovery domain
+# entities to their canonical form. Applied when building the result; raw seg.text
+# is never mutated. Curated + explicit only (no fuzzy match) so it cannot
+# hallucinate. Extend at deploy via GLOSSARY_EXTRA (JSON: {canonical: [aliases]}).
+GLOSSARY_CORRECTION_ENABLED = os.getenv("GLOSSARY_CORRECTION_ENABLED", "true").lower() == "true"
+GLOSSARY = {
+    "mPokket": ["ఇంటి పక్కనుంచి", "ఇంటి పక్క", "నిపోకెటి", "ఎం-పాకెట్", "ఎం పాకెట్", "mpokket", "m pokket"],
+    "CIBIL": ["Sibulhamper", "Sibul hamper", "సిబుల్", "సిబిల్ హ్యాంపర్", "cibil"],
+    "EMI": ["emi"],
+    "NACH": ["nach"],
+    "penalty": ["పెనాల్టీ", "ఫనాల్టి", "Penalty"],
+    "recovery notice": ["Recovery notice", "రికవరీ నోటీస్", "recovery notis"],
+    "reference": ["రిఫరెన్స్", "Reference"],
+    "overdue": ["ఓవర్ డ్యూ", "ఓవర్ ది", "over due", "overdue"],
+    "waiver": ["వేవర్", "లేవర్", "waiver"],
+}
+_glossary_extra = os.getenv("GLOSSARY_EXTRA", "").strip()
+if _glossary_extra:
+    try:
+        import json as _json_g
+        for _canon, _aliases in _json_g.loads(_glossary_extra).items():
+            GLOSSARY.setdefault(_canon, [])
+            GLOSSARY[_canon].extend(a for a in _aliases if a not in GLOSSARY[_canon])
+    except Exception:
+        warnings.warn("GLOSSARY_EXTRA is not valid JSON; ignored.", RuntimeWarning, stacklevel=1)
+
 # Pass 3: SeamlessM4T v2 — Meta multilingual end-to-end model (run on original audio).
 SEAMLESS_MODEL = os.getenv("SEAMLESS_MODEL", "facebook/seamless-m4t-v2-large")
 

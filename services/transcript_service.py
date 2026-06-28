@@ -2,6 +2,7 @@ import json
 
 import config
 from services import storage
+from services import glossary_service
 
 
 def final_path(case_id: str, file_id: str) -> str:
@@ -12,11 +13,17 @@ def final_path(case_id: str, file_id: str) -> str:
 def build(case_id, file_id, source_hash, segments, *, status) -> dict:
     out = []
     for s in segments:
+        # Additive L7 glossary correction — raw `text` is preserved verbatim;
+        # `text_corrected` applies the curated domain-entity fixes. Reviewer sees
+        # both. `glossary_corrections` lists what changed for the audit trail.
+        gc = glossary_service.correct(s.text or "")
         out.append({
             "segment_id": s.id,
             "start": s.start, "end": s.end, "speaker": s.speaker,
             "overlap": "+" in (s.speaker or ""),
             "text": s.text, "language": s.detected_language,
+            "text_corrected": gc["text"],
+            "glossary_corrections": gc["replacements"],
             "confidence": s.confidence, "source_pass": s.source_pass,
             "flagged_for_review": bool(s.flagged),
             "review_status": s.review_status,
@@ -127,11 +134,14 @@ def build_conversation_table(file_id, segments) -> dict:
         txt = (getattr(s, "text", "") or "").strip()
         if not txt or len(txt) < config.TABLE_MIN_CHARS:
             continue
+        gc = glossary_service.correct(txt)
         rows.append({
             "sl": len(rows) + 1,
             "time": _mmss(s.start),
             "person": s.speaker,
-            "conversation": txt,
+            "conversation": txt,                          # raw, verbatim
+            "conversation_corrected": gc["text"],         # additive glossary fix
+            "glossary_corrections": gc["replacements"],
             "language": getattr(s, "detected_language", None),
         })
     return {"file_id": file_id, "rows": rows}
