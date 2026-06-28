@@ -541,14 +541,21 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
     # those we feed a denoised + loudness-normalized input instead. Gated by mean
     # loudness so the clean path (clear phone calls) is unchanged.
     asr_src = original16
-    if config.ASR_ENHANCE_LOW_VOLUME and enhanced16:
+    if enhanced16:
+        forced = bool((job.options or {}).get("enhance_audio"))
         mv = ffmpeg_service.measure_mean_volume(original16)
-        if mv is not None and mv < config.ASR_LOW_VOLUME_DBFS:
+        auto = (config.ASR_ENHANCE_LOW_VOLUME and mv is not None
+                and mv < config.ASR_LOW_VOLUME_DBFS)
+        # Caller opt-in (known noisy/far-field recording) OR auto low-volume gate.
+        # Volume alone misses noisy-but-loud audio, so the opt-in flag covers it
+        # without a brittle threshold that would also catch clean loud calls.
+        if forced or auto:
             loud = storage.derivative_path(job.case_id, job.file_id, "asr_input",
                                            f"{job.file_id}_asr_enh16.wav")
             asr_src = loud if preprocess_service._loudnorm(enhanced16, loud) else enhanced16
             au.append_entry(job.case_id, file_id=job.file_id, stage="L5",
-                            parameters={"low_volume_dbfs": mv, "asr_input": "enhanced_loudnorm"},
+                            parameters={"mean_dbfs": mv, "asr_input": "enhanced_loudnorm",
+                                        "trigger": "forced" if forced else "low_volume"},
                             session=session)
             session.commit()
 

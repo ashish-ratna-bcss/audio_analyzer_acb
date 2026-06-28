@@ -89,6 +89,7 @@ def create_case():
 async def upload_file(case_id: str, audio: UploadFile = File(...),
                       separate: bool = Form(default=False),
                       num_speakers: int = Form(default=0),
+                      enhance_audio: bool = Form(default=False),
                       callback_url: str = Form(default="")):
     ext = os.path.splitext(audio.filename or "")[1].lower()
     if ext not in config.ALLOWED_EXTENSIONS:
@@ -103,6 +104,8 @@ async def upload_file(case_id: str, audio: UploadFile = File(...),
     opts = {"separate": separate}
     if num_speakers and num_speakers > 0:
         opts["num_speakers"] = num_speakers   # exact speaker count hint for diarization
+    if enhance_audio:
+        opts["enhance_audio"] = True          # force denoised+loudnorm Whisper input (noisy/far-field)
     if callback_url:
         opts["callback_url"] = callback_url   # webhook target for status events
     with get_session() as s:
