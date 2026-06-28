@@ -119,6 +119,23 @@ MMS_LID_MODEL = os.getenv("MMS_LID_MODEL", "facebook/mms-lid-256")
 # Loads via AutoModel with trust_remote_code=True; no NeMo dependency.
 INDIC_CONFORMER_MODEL = os.getenv("INDIC_CONFORMER_MODEL", "ai4bharat/indic-conformer-600m-multilingual")
 
+# Gated enhancement for the whole-file Whisper input. Speech enhancement HELPS
+# noisy/quiet/far-field audio but HURTS clean audio (well-documented). So feed the
+# Whisper passes a denoised + loudness-normalized input ONLY when the file is
+# quiet (mean dBFS below the threshold); clean files (e.g. clear phone calls) keep
+# the RAW track unchanged, preserving their current accuracy. IndicConformer
+# already runs on enhanced per-clip audio, so this only re-routes the Whisper input.
+ASR_ENHANCE_LOW_VOLUME = os.getenv("ASR_ENHANCE_LOW_VOLUME", "true").lower() == "true"
+# Files quieter than this mean dBFS are treated as low-quality -> enhanced input.
+# Conservative so typical phone calls (~-15..-27 dBFS) stay on the raw path;
+# far-field / sting recordings (~-30 dBFS and below) get enhancement.
+ASR_LOW_VOLUME_DBFS = float(os.getenv("ASR_LOW_VOLUME_DBFS", "-30.0"))
+# Whisper temperature fallback: greedy (0.0) first, escalate ONLY when a decode
+# fails the compression-ratio / logprob quality gates (hard audio). Clean audio
+# passes at 0.0 -> deterministic + unchanged; hard audio gets recovery retries.
+_asr_temps = os.getenv("ASR_TEMPERATURES", "0.0,0.2,0.4,0.6").strip()
+ASR_TEMPERATURES = tuple(float(t) for t in _asr_temps.split(",") if t.strip()) or (0.0,)
+
 # Dual-engine ASR: run Whisper-large-v3 alongside IndicConformer per clip and let
 # asr_selector pick the better output (code-mix/numbers/entities -> Whisper; pure
 # native Telugu -> IndicConformer). False = IndicConformer-only (legacy behaviour).

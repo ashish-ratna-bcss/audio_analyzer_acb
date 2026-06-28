@@ -19,6 +19,7 @@ from services import cross_model, whisper_service, asr_selector, telugu_asr_serv
 from services import transcript_service as ts
 from services import webhook_service
 from services.hashing import sha256_file
+from services import ffmpeg_service
 from services.ffmpeg_service import convert_dual_rate, UnsupportedFormatError
 
 
@@ -534,21 +535,36 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
     file_prior = lang_id_service.vote_file_language(
         lids, allowed_langs=config.ALLOWED_LANGS, min_conf=config.LID_VOTE_MIN_CONF)
 
+    # Choose the whole-file Whisper input. Clean audio decodes best RAW (speech
+    # enhancement adds artifacts that hurt Whisper). But quiet/far-field/noisy
+    # recordings are below Whisper's intelligibility floor on the raw track — for
+    # those we feed a denoised + loudness-normalized input instead. Gated by mean
+    # loudness so the clean path (clear phone calls) is unchanged.
+    asr_src = original16
+    if config.ASR_ENHANCE_LOW_VOLUME and enhanced16:
+        mv = ffmpeg_service.measure_mean_volume(original16)
+        if mv is not None and mv < config.ASR_LOW_VOLUME_DBFS:
+            loud = storage.derivative_path(job.case_id, job.file_id, "asr_input",
+                                           f"{job.file_id}_asr_enh16.wav")
+            asr_src = loud if preprocess_service._loudnorm(enhanced16, loud) else enhanced16
+            au.append_entry(job.case_id, file_id=job.file_id, stage="L5",
+                            parameters={"low_volume_dbfs": mv, "asr_input": "enhanced_loudnorm"},
+                            session=session)
+            session.commit()
+
     # WhisperX-pattern second engine: decode the WHOLE file once with word
-    # timestamps (full context -> fluent, punctuated, correct numbers), on the
-    # RAW 16k track (speech enhancement degrades Whisper). Each turn's text is
-    # then sliced from these words by time and handed to run_asr. One decode for
-    # the file beats short per-clip decodes that lose all context.
+    # timestamps (full context -> fluent, punctuated, correct numbers). Each turn's
+    # text is then sliced from these words by time and handed to run_asr. One
+    # decode for the file beats short per-clip decodes that lose all context.
     whisper_words = []
     if config.ASR_DUAL_ENGINE and file_prior:
-        whisper_words = whisper_service.transcribe_words(original16, file_prior).get("words", [])
+        whisper_words = whisper_service.transcribe_words(asr_src, file_prior).get("words", [])
 
-    # Third engine: fine-tuned Telugu Whisper, whole-file word timestamps, on the
-    # RAW track. Only for files whose language prior is a fine-tune target (the
-    # fine-tune is Telugu-only). Sliced per turn like the generic Whisper pass.
+    # Third engine: fine-tuned Telugu Whisper, whole-file word timestamps. Only
+    # for files whose language prior is a fine-tune target (Telugu-only fine-tune).
     telugu_words = []
     if config.ASR_TELUGU_ENGINE and file_prior in config.ASR_FT_LANGS:
-        telugu_words = telugu_asr_service.transcribe_words(original16, file_prior).get("words", [])
+        telugu_words = telugu_asr_service.transcribe_words(asr_src, file_prior).get("words", [])
 
     for idx, unit in enumerate(units):
         if _torch.cuda.is_available():
