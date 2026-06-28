@@ -629,9 +629,96 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
         flagged_count += 1 if flagged else 0
         per_segment.append(entry)
 
+    # Coverage recovery: emit whole-file Whisper speech that fell outside EVERY
+    # unit (quiet/far-field regions diarization+VAD missed). Without this, that
+    # transcribed speech is silently dropped — the "missed main conversation".
+    if config.ASR_COVERAGE_RECOVERY and whisper_words:
+        covered = [(u["start"], u["end"]) for u in units]
+        for ws, we in _uncovered_windows(whisper_words, covered,
+                                         config.COVERAGE_GAP_S, config.COVERAGE_WINDOW_S):
+            if we - ws < config.COVERAGE_MIN_DUR_S:
+                continue
+            wt = whisper_service.slice_words(whisper_words, ws, we)
+            tt = (whisper_service.slice_words(telugu_words, ws, we)
+                  if telugu_words else {"text": "", "confidence": None})
+            asr = _coverage_asr(wt, tt, file_prior)
+            if not asr["text"]:
+                continue
+            meta = {"speaker": "Speaker_unknown", "concurrent_speakers": [],
+                    "is_overlap": False, "segment_type": "coverage"}
+            _, flagged, entry = _emit_segment(
+                job, session, start=round(ws, 3), end=round(we, 3),
+                speaker="Speaker_unknown", asr=asr,
+                clip_clean=original16, clip_raw=original16,
+                diarization_meta=meta, extra_flags=["coverage_recovered"])
+            flagged_count += 1 if flagged else 0
+            per_segment.append(entry)
+
     session.commit()
     reconcile.check("L4:units", len(units), "L5:segments", len(per_segment))
     return per_segment, flagged_count
+
+
+def _uncovered_windows(words, covered, gap_s, max_win_s):
+    """Group Whisper words whose midpoint lies outside every `covered` (start,end)
+    interval into recovery windows. A new window starts on a >gap_s pause between
+    consecutive uncovered words or when the window would exceed max_win_s."""
+    def _is_covered(mid):
+        return any(s <= mid <= e for s, e in covered)
+
+    unc = [w for w in words if not _is_covered((w["start"] + w["end"]) / 2.0)]
+    unc.sort(key=lambda w: w["start"])
+    windows, cur = [], None
+    for w in unc:
+        if cur is None:
+            cur = [w["start"], w["end"]]
+        elif w["start"] - cur[1] > gap_s or (w["end"] - cur[0]) > max_win_s:
+            windows.append((cur[0], cur[1]))
+            cur = [w["start"], w["end"]]
+        else:
+            cur[1] = w["end"]
+    if cur is not None:
+        windows.append((cur[0], cur[1]))
+    return windows
+
+
+def _coverage_asr(whisper_turn, telugu_turn, file_prior):
+    """Build an _emit_segment-compatible record for a coverage window from the
+    whole-file Whisper / Telugu slices (no clip -> no IndicConformer). The
+    selector picks code-mix->Whisper, pure-native->Telugu, ghost-filtered."""
+    wf = hallucination_filter.filter_pass({
+        "text": whisper_turn.get("text", ""), "confidence": whisper_turn.get("confidence"),
+        "language": file_prior, "model": config.WHISPER_MODEL, "abstained": False})
+    tf = hallucination_filter.filter_pass({
+        "text": telugu_turn.get("text", ""), "confidence": telugu_turn.get("confidence"),
+        "language": file_prior, "model": config.WHISPER_TELUGU_MODEL, "abstained": False})
+    w_text = (wf.get("text") or "").strip()
+    t_text = (tf.get("text") or "").strip()
+    sel = asr_selector.select(
+        indic_text="", indic_source="none", indic_agreement=0.0, indic_abstained=True,
+        whisper_text=w_text, whisper_confidence=whisper_turn.get("confidence"),
+        whisper_no_speech=None,
+        telugu_text=t_text, telugu_confidence=telugu_turn.get("confidence"),
+        embed_fn=embedding_service.similarity,
+        agreement_min=config.AGREEMENT_MIN, no_speech_max=config.NO_SPEECH_MAX)
+    model = {"whisper": config.WHISPER_MODEL,
+             "telugu_whisper": config.WHISPER_TELUGU_MODEL}.get(sel["source"], config.WHISPER_MODEL)
+    text = sel["text"]
+    return {
+        "lang_id": {"mms_top1": None, "mms_top1_confidence": None, "mms_top2": None,
+                    "mms_top2_confidence": None, "routing_lang": file_prior},
+        "text": text, "enh_text": "", "org_text": "",
+        "confidence": sel["confidence"], "agreement": sel["agreement"],
+        "source": sel["source"], "abstained": not text,
+        "hallucination": wf.get("hallucination") or tf.get("hallucination"),
+        "model": model,
+        "whisper": {"text": w_text, "confidence": whisper_turn.get("confidence"),
+                    "no_speech_prob": None, "compression_ratio": None,
+                    "language": file_prior, "model": config.WHISPER_MODEL} if w_text else None,
+        "telugu": {"text": t_text, "confidence": telugu_turn.get("confidence"),
+                   "language": file_prior, "model": config.WHISPER_TELUGU_MODEL} if t_text else None,
+        "indic_text": "", "indic_confidence": None, "indic_agreement": None,
+        "selection_reason": "coverage_recovery", "selection_flag": sel["flag"]}
 
 
 def _write_confidence_report(job, per_segment, flagged_count, session):

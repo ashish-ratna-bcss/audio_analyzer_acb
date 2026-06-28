@@ -119,6 +119,16 @@ MMS_LID_MODEL = os.getenv("MMS_LID_MODEL", "facebook/mms-lid-256")
 # Loads via AutoModel with trust_remote_code=True; no NeMo dependency.
 INDIC_CONFORMER_MODEL = os.getenv("INDIC_CONFORMER_MODEL", "ai4bharat/indic-conformer-600m-multilingual")
 
+# Coverage recovery: the pipeline only emits speech that falls inside a
+# diarization/gap unit. On quiet/far-field audio, pyannote+VAD miss large
+# stretches, so whole-file Whisper transcribes them but those words are dropped
+# (the "missed main conversation"). When on, any Whisper words outside every unit
+# are grouped into Speaker_unknown segments so nothing transcribed is lost.
+ASR_COVERAGE_RECOVERY = os.getenv("ASR_COVERAGE_RECOVERY", "true").lower() == "true"
+COVERAGE_GAP_S = float(os.getenv("COVERAGE_GAP_S", "2.0"))      # split windows on >2s word gap
+COVERAGE_WINDOW_S = float(os.getenv("COVERAGE_WINDOW_S", "15.0"))  # max recovered window length
+COVERAGE_MIN_DUR_S = float(os.getenv("COVERAGE_MIN_DUR_S", "0.4"))  # drop sub-0.4s noise windows
+
 # Gated enhancement for the whole-file Whisper input. Speech enhancement HELPS
 # noisy/quiet/far-field audio but HURTS clean audio (well-documented). So feed the
 # Whisper passes a denoised + loudness-normalized input ONLY when the file is
