@@ -135,6 +135,12 @@ COVERAGE_MIN_DUR_S = float(os.getenv("COVERAGE_MIN_DUR_S", "0.4"))  # drop sub-0
 # quiet (mean dBFS below the threshold); clean files (e.g. clear phone calls) keep
 # the RAW track unchanged, preserving their current accuracy. IndicConformer
 # already runs on enhanced per-clip audio, so this only re-routes the Whisper input.
+# Release all forensic model VRAM after each job so the co-located OCR service
+# can use the GPU while forensic is idle. Models lazily reload on the next job
+# (~30-60s one-time cost). Set false to keep models resident (faster repeat jobs,
+# but holds ~10GB even when idle).
+ASR_UNLOAD_AFTER_JOB = os.getenv("ASR_UNLOAD_AFTER_JOB", "true").lower() == "true"
+
 ASR_ENHANCE_LOW_VOLUME = os.getenv("ASR_ENHANCE_LOW_VOLUME", "true").lower() == "true"
 # Upload defaults applied when the client omits the field. ACB evidence is mostly
 # noisy/far-field 2-party trap audio, so enhance defaults on and the speaker count

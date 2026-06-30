@@ -16,7 +16,7 @@ from services import preprocess_service, hallucination_filter
 from services import (diarization_service, indic_asr_service,
                       embedding_service, clip_service, lang_id_service)
 from services import cross_model, whisper_service, asr_selector, telugu_asr_service
-from services import audio_analysis_service, dereverb_service
+from services import audio_analysis_service, dereverb_service, model_registry
 from services import transcript_service as ts
 from services import webhook_service
 from services.hashing import sha256_file
@@ -746,6 +746,19 @@ def _write_confidence_report(job, per_segment, flagged_count, session):
 
 @celery.task(name="pipeline.run_pipeline")
 def run_pipeline(job_id: str) -> str:
+    """Celery entrypoint. Runs the full pipeline, then releases all model VRAM in
+    a finally so the co-located OCR service can use the GPU while forensic is
+    idle (models lazily reload on the next job)."""
+    try:
+        return _run_pipeline(job_id)
+    finally:
+        try:
+            model_registry.unload_all()
+        except Exception:
+            pass
+
+
+def _run_pipeline(job_id: str) -> str:
     with get_session() as s:
         job = repo.get_job(s, job_id)
         if job is None:

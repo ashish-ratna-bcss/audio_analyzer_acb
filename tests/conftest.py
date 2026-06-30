@@ -32,7 +32,7 @@ _NO_STUB_MODULES = {
     "test_indic_abstain", "test_hallucination_filter", "test_lang_vote",
     "test_preprocess_service", "test_transcript_outputs", "test_sortformer_service",
     "test_sortformer_client", "test_telugu_asr_service", "test_asr_selector",
-    "test_audio_analysis",
+    "test_audio_analysis", "test_model_registry",
 }
 
 
