@@ -32,6 +32,7 @@ _NO_STUB_MODULES = {
     "test_indic_abstain", "test_hallucination_filter", "test_lang_vote",
     "test_preprocess_service", "test_transcript_outputs", "test_sortformer_service",
     "test_sortformer_client", "test_telugu_asr_service", "test_asr_selector",
+    "test_audio_analysis",
 }
 
 
@@ -88,6 +89,12 @@ def _stub_models(monkeypatch, request):
         monkeypatch.setattr(telugu_asr_service, "transcribe_words",
             lambda p, lang=None: {"words": [], "text": "", "language": lang},
             raising=False)
+        # L2 analysis: stub to a clean/loud profile so pipeline-driving tests stay
+        # on the raw ASR path (no enhancement) — matching prior behaviour.
+        from services import audio_analysis_service
+        monkeypatch.setattr(audio_analysis_service, "analyze",
+            lambda p: {"mean_dbfs": -18.0, "snr_db": 30.0,
+                       "clipping_ratio": 0.0, "reverb_proxy": 0.1}, raising=False)
     except Exception:
         pass
     yield

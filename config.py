@@ -136,10 +136,26 @@ COVERAGE_MIN_DUR_S = float(os.getenv("COVERAGE_MIN_DUR_S", "0.4"))  # drop sub-0
 # the RAW track unchanged, preserving their current accuracy. IndicConformer
 # already runs on enhanced per-clip audio, so this only re-routes the Whisper input.
 ASR_ENHANCE_LOW_VOLUME = os.getenv("ASR_ENHANCE_LOW_VOLUME", "true").lower() == "true"
+# Upload defaults applied when the client omits the field. ACB evidence is mostly
+# noisy/far-field 2-party trap audio, so enhance defaults on and the speaker count
+# defaults to 2. Both remain per-upload overridable (e.g. num_speakers=0 for a
+# multi-party recording; enhance_audio=false for a pristine source).
+ASR_ENHANCE_AUDIO_DEFAULT = os.getenv("ASR_ENHANCE_AUDIO_DEFAULT", "true").lower() == "true"
+DEFAULT_NUM_SPEAKERS = int(os.getenv("DEFAULT_NUM_SPEAKERS", "2"))
 # Files quieter than this mean dBFS are treated as low-quality -> enhanced input.
 # Conservative so typical phone calls (~-15..-27 dBFS) stay on the raw path;
 # far-field / sting recordings (~-30 dBFS and below) get enhancement.
 ASR_LOW_VOLUME_DBFS = float(os.getenv("ASR_LOW_VOLUME_DBFS", "-30.0"))
+# L2 analysis-driven gate: below this estimated SNR the recording is noisy
+# (regardless of loudness) -> enhance the ASR input. Catches the noisy-but-loud
+# case a volume-only gate misses (e.g. the ACB sting at -23 dBFS / low SNR).
+# Clean calls (~25-35 dB SNR) stay on the raw path. Empty disables the SNR gate.
+_asr_snr = os.getenv("ASR_ANALYSIS_SNR_DB", "15.0").strip()
+ASR_ANALYSIS_SNR_DB = float(_asr_snr) if _asr_snr else -1.0
+# Optional WPE dereverberation for reverberant far-field audio (off by default;
+# requires nara_wpe). Applied to the enhanced ASR input when reverb_proxy is high.
+ASR_DEREVERB = os.getenv("ASR_DEREVERB", "false").lower() == "true"
+ASR_REVERB_PROXY_MIN = float(os.getenv("ASR_REVERB_PROXY_MIN", "0.6"))
 # Whisper temperature fallback: greedy (0.0) first, escalate ONLY when a decode
 # fails the compression-ratio / logprob quality gates (hard audio). Clean audio
 # passes at 0.0 -> deterministic + unchanged; hard audio gets recovery retries.

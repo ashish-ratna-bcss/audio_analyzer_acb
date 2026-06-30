@@ -16,6 +16,7 @@ from services import preprocess_service, hallucination_filter
 from services import (diarization_service, indic_asr_service,
                       embedding_service, clip_service, lang_id_service)
 from services import cross_model, whisper_service, asr_selector, telugu_asr_service
+from services import audio_analysis_service, dereverb_service
 from services import transcript_service as ts
 from services import webhook_service
 from services.hashing import sha256_file
@@ -536,26 +537,30 @@ def _l5_l6_segments(job, union, turns, enhanced16, original16, session):
         lids, allowed_langs=config.ALLOWED_LANGS, min_conf=config.LID_VOTE_MIN_CONF)
 
     # Choose the whole-file Whisper input. Clean audio decodes best RAW (speech
-    # enhancement adds artifacts that hurt Whisper). But quiet/far-field/noisy
-    # recordings are below Whisper's intelligibility floor on the raw track — for
-    # those we feed a denoised + loudness-normalized input instead. Gated by mean
-    # loudness so the clean path (clear phone calls) is unchanged.
+    # enhancement adds artifacts that hurt Whisper). Quiet/far-field/NOISY
+    # recordings are below the raw-decode bar — feed those a denoised (+ optional
+    # dereverb) + loudness-normalized input. L2 analysis drives the decision:
+    # the SNR estimate catches noisy-but-loud audio a volume-only gate misses
+    # (the ACB sting is loud yet low-SNR). Clean loud calls stay on the raw path.
     asr_src = original16
     if enhanced16:
         forced = bool((job.options or {}).get("enhance_audio"))
-        mv = ffmpeg_service.measure_mean_volume(original16)
-        auto = (config.ASR_ENHANCE_LOW_VOLUME and mv is not None
-                and mv < config.ASR_LOW_VOLUME_DBFS)
-        # Caller opt-in (known noisy/far-field recording) OR auto low-volume gate.
-        # Volume alone misses noisy-but-loud audio, so the opt-in flag covers it
-        # without a brittle threshold that would also catch clean loud calls.
+        prof = audio_analysis_service.analyze(original16)
+        auto = config.ASR_ENHANCE_LOW_VOLUME and audio_analysis_service.needs_enhancement(prof)
         if forced or auto:
+            src = enhanced16
+            # Optional WPE dereverb for reverberant far-field audio (gated, safe).
+            if config.ASR_DEREVERB and (prof.get("reverb_proxy") or 0) >= config.ASR_REVERB_PROXY_MIN:
+                dr = storage.derivative_path(job.case_id, job.file_id, "asr_input",
+                                             f"{job.file_id}_dereverb16.wav")
+                if dereverb_service.dereverb(src, dr):
+                    src = dr
             loud = storage.derivative_path(job.case_id, job.file_id, "asr_input",
                                            f"{job.file_id}_asr_enh16.wav")
-            asr_src = loud if preprocess_service._loudnorm(enhanced16, loud) else enhanced16
+            asr_src = loud if preprocess_service._loudnorm(src, loud) else src
             au.append_entry(job.case_id, file_id=job.file_id, stage="L5",
-                            parameters={"mean_dbfs": mv, "asr_input": "enhanced_loudnorm",
-                                        "trigger": "forced" if forced else "low_volume"},
+                            parameters={**prof, "asr_input": "enhanced_loudnorm",
+                                        "trigger": "forced" if forced else "analysis"},
                             session=session)
             session.commit()
 
